@@ -1,0 +1,19 @@
+# Setiap perubahan di path berikut wajib direview oleh owner terkait.
+# Ganti @username sesuai anggota tim sebenarnya sebelum dipakai di GitHub.
+
+# Default: semua file
+*                               @project-lead
+
+# Database & schema
+/prisma/                       @backend-lead
+
+# Matching & Ranking engine (logic inti bisnis)
+/src/modules/matching/         @backend-lead
+/src/modules/ranking/          @backend-lead
+
+# Konfigurasi & infra
+/src/config/                   @devops-lead
+/.github/                      @devops-lead
+
+# Dokumentasi
+/docs/                         @project-lead

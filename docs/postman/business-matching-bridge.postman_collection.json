@@ -1,0 +1,1526 @@
+{
+  "info": {
+    "name": "Business Matching Bridge API",
+    "description": "Auth (Supabase) -> Verification -> Opportunity -> Boost -> Matching -> Ranking -> Invitation -> Deal -> Fraud Check.\n\nSet variable `accessToken` dengan Supabase access token (dari sign in di client), lalu jalankan folder secara berurutan: Auth -> Verification -> Opportunity -> Boost -> Matching -> Invitation -> Deal -> Review -> Notification -> Fraud (admin).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "healthUrl",
+      "value": "http://localhost:4000/api/health",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string",
+      "description": "Supabase access_token, didapat dari sign-in di client (bukan dibuat API ini)"
+    },
+    {
+      "key": "partyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "counterpartyId",
+      "value": "",
+      "type": "string",
+      "description": "partyId lawan transaksi, untuk testing matching"
+    },
+    {
+      "key": "categoryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "opportunityId",
+      "value": "",
+      "type": "string",
+      "description": "Opportunity NEED milik sendiri"
+    },
+    {
+      "key": "counterOpportunityId",
+      "value": "",
+      "type": "string",
+      "description": "Opportunity OFFER milik party lain (hasil matching)"
+    },
+    {
+      "key": "matchId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invitationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "dealId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "profileId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "verificationDocumentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fraudFlagId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "inquiryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "questionId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{healthUrl}}",
+              "host": [
+                "{{healthUrl}}"
+              ]
+            },
+            "description": "Cek koneksi API + DB (SELECT 1). Return 503 kalau DB bermasalah."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 - Auth",
+      "item": [
+        {
+          "name": "Register (sync dari Supabase Auth)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Panggil setelah user sign up/sign in lewat Supabase Auth di client. Idempotent - kalau sudah pernah register, cukup return data yang ada.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Budi Santoso\",\n  \"phone\": \"+6281234567890\",\n  \"bio\": \"Pemilik UMKM kopi asal Bandung\",\n  \"location\": \"Bandung\",\n  \"party\": {\n    \"name\": \"Kopi Nusantara\",\n    \"isCompany\": true,\n    \"description\": \"Supplier biji kopi arabika kualitas ekspor\",\n    \"location\": \"Bandung\",\n    \"npwp\": \"01.234.567.8-901.000\",\n    \"nib\": \"1234567890123\"\n  },\n  \"businessRoles\": [\n    \"SUPPLIER\"\n  ],\n  \"capabilityNames\": [\n    \"kopi-arabika\",\n    \"ekspor\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Ambil profile yang sedang login beserta businessRoles & parties."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Profile",
+      "item": [
+        {
+          "name": "Get Profile By Id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/profiles/{{profileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "profiles",
+                "{{profileId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "profiles",
+                "me"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Budi Santoso Wijaya\",\n  \"bio\": \"Update bio\",\n  \"location\": \"Jakarta\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - Verification",
+      "item": [
+        {
+          "name": "Upload Verification Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/verification-documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "verification-documents"
+              ]
+            },
+            "description": "Multipart upload. Field \"file\" wajib diisi manual (pilih file di tab Body > form-data).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "type",
+                  "value": "NIB",
+                  "type": "text",
+                  "description": "KTP | NIB | NPWP | SERTIFIKAT | LAINNYA"
+                },
+                {
+                  "key": "partyId",
+                  "value": "{{partyId}}",
+                  "type": "text",
+                  "description": "Kosongkan kalau dokumen milik Profile langsung, bukan Party"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List My Verification Documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/verification-documents/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "verification-documents",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Review Document (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/verification-documents/{{verificationDocumentId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "verification-documents",
+                "{{verificationDocumentId}}",
+                "review"
+              ]
+            },
+            "description": "Butuh BusinessRole ADMIN pada akun yang login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"VERIFIED\",\n  \"rejectReason\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - Opportunity",
+      "item": [
+        {
+          "name": "Create Opportunity (NEED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opportunities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opportunities"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"partyId\": \"{{partyId}}\",\n  \"type\": \"NEED\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"capabilityNames\": [\n    \"kopi-arabika\"\n  ],\n  \"title\": \"Butuh supplier kopi arabika kualitas ekspor\",\n  \"description\": \"Mencari supplier biji kopi arabika kualitas ekspor untuk kafe di Bandung, kontrak jangka panjang.\",\n  \"location\": \"Bandung\",\n  \"budgetMin\": 10000000,\n  \"budgetMax\": 50000000,\n  \"tags\": [\n    \"kopi\",\n    \"f&b\"\n  ],\n  \"priority\": \"HIGH\",\n  \"visibility\": \"PUBLIC\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Opportunities (filter/sort/search)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/opportunities?type=OFFER&categoryId={{categoryId}}&location=Bandung&tag=kopi&budgetMin=10000000&budgetMax=50000000&search=kopi arabika&sortBy=createdAt&sortOrder=desc&page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opportunities"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "OFFER",
+                  "description": ""
+                },
+                {
+                  "key": "categoryId",
+                  "value": "{{categoryId}}",
+                  "description": ""
+                },
+                {
+                  "key": "location",
+                  "value": "Bandung",
+                  "description": ""
+                },
+                {
+                  "key": "tag",
+                  "value": "kopi",
+                  "description": ""
+                },
+                {
+                  "key": "budgetMin",
+                  "value": "10000000",
+                  "description": ""
+                },
+                {
+                  "key": "budgetMax",
+                  "value": "50000000",
+                  "description": ""
+                },
+                {
+                  "key": "search",
+                  "value": "kopi arabika",
+                  "description": ""
+                },
+                {
+                  "key": "sortBy",
+                  "value": "createdAt",
+                  "description": ""
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "desc",
+                  "description": ""
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get Opportunity Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/opportunities/{{opportunityId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opportunities",
+                "{{opportunityId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update Opportunity",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opportunities/{{opportunityId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opportunities",
+                "{{opportunityId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\",\n  \"priority\": \"URGENT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Opportunity Media",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/opportunities/{{opportunityId}}/media",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "opportunities",
+                "{{opportunityId}}",
+                "media"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 - Boost",
+      "item": [
+        {
+          "name": "List Boost Plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/boosts/plans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "boosts",
+                "plans"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Activate Boost",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/boosts/{{opportunityId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "boosts",
+                "{{opportunityId}}",
+                "activate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planType\": \"PREMIUM\",\n  \"paymentStatus\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 - Matching + Ranking",
+      "item": [
+        {
+          "name": "Run Matching Engine",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/matching/{{opportunityId}}/run?limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "matching",
+                "{{opportunityId}}",
+                "run"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Hard filter + scoring (capability/location/budget/tags/text/priority) digabung Ranking Engine (reputation/response/completion/activity/verification/boost - penalty). Simpan matchId dari response untuk step Invitation."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 - Invitation",
+      "item": [
+        {
+          "name": "Create Invitation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"matchId\": \"{{matchId}}\",\n  \"message\": \"Halo, produk Anda cocok dengan kebutuhan kami. Mari diskusi lebih lanjut.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List My Invitations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Respond Invitation (Accept)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/{{invitationId}}/respond",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "{{invitationId}}",
+                "respond"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ACCEPT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Respond Invitation (Reject)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/{{invitationId}}/respond",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "{{invitationId}}",
+                "respond"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "08 - Deal",
+      "item": [
+        {
+          "name": "List My Deals",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/deals/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "deals",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update Deal -> DEAL",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/deals/{{dealId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "deals",
+                "{{dealId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DEAL\",\n  \"agreedTerms\": {\n    \"price\": 45000000,\n    \"quantityKg\": 500\n  },\n  \"notes\": \"Sepakat harga & kuantitas\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Deal -> IN_PROGRESS",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/deals/{{dealId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "deals",
+                "{{dealId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Deal -> COMPLETED (lewat Fraud Check)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/deals/{{dealId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "deals",
+                "{{dealId}}"
+              ]
+            },
+            "description": "Sebelum status berubah ke COMPLETED, Fraud Detection Engine berjalan otomatis. Kalau risk score >= blockThreshold, response 409 dengan detail temuan (lihat folder 10 - Fraud).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"COMPLETED\",\n  \"notes\": \"Barang sudah diterima dan sesuai\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Deal -> CANCELLED",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/invitations/deals/{{dealId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invitations",
+                "deals",
+                "{{dealId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\",\n  \"cancelReason\": \"Supplier tidak bisa memenuhi kuantitas\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 - Review",
+      "item": [
+        {
+          "name": "Create Review (pasca Deal COMPLETED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reviews/deals/{{dealId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reviews",
+                "deals",
+                "{{dealId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"revieweeId\": \"{{counterpartyId}}\",\n  \"rating\": 5,\n  \"comment\": \"Kualitas kopi sangat baik, pengiriman tepat waktu.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Reviews of a Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reviews/profile/{{profileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reviews",
+                "profile",
+                "{{profileId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 - Notification",
+      "item": [
+        {
+          "name": "List My Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{invitationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{invitationId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11 - Fraud (Admin only)",
+      "item": [
+        {
+          "name": "List Fraud Flags",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fraud-flags?status=PENDING_REVIEW",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fraud-flags"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING_REVIEW",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Butuh BusinessRole ADMIN."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Fraud Flag Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fraud-flags/{{fraudFlagId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fraud-flags",
+                "{{fraudFlagId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Review Fraud Flag - Confirm",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fraud-flags/{{fraudFlagId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fraud-flags",
+                "{{fraudFlagId}}",
+                "review"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CONFIRMED\",\n  \"note\": \"Terbukti kedua party dimiliki orang yang sama.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Review Fraud Flag - Dismiss",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fraud-flags/{{fraudFlagId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "fraud-flags",
+                "{{fraudFlagId}}",
+                "review"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DISMISSED\",\n  \"note\": \"False positive - dua perusahaan berbeda kebetulan satu group holding yang legal.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "12 - Business Decision Engine",
+      "item": [
+        {
+          "name": "Start Inquiry (ambigu - rumah)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries"
+              ]
+            },
+            "description": "Publik, tidak butuh login. Kalau SolutionCategory ambigu, response berisi pendingQuestions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statedWant\": \"saya lagi cari rumah\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start Inquiry (tidak ambigu - bor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statedWant\": \"cari bor listrik yang bagus\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start Inquiry (no data - contoh jujur)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statedWant\": \"saya butuh jasa katering pernikahan\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Inquiry Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries/{{inquiryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries",
+                "{{inquiryId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Clarifying Answer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries/{{inquiryId}}/answers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries",
+                "{{inquiryId}}",
+                "answers"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"answer\": \"Ya, saya belum punya tempat tinggal tetap\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Recommendations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/decision/inquiries/{{inquiryId}}/recommendations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "inquiries",
+                "{{inquiryId}}",
+                "recommendations"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List Knowledge Base",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/decision/knowledge",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "knowledge"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Add Knowledge Entry (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/decision/knowledge",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decision",
+                "knowledge"
+              ]
+            },
+            "description": "Butuh BusinessRole ADMIN. Basis pengetahuan dikurasi manual, bukan digenerate AI.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rootProblem\": {\n    \"name\": \"Butuh acara pernikahan berjalan lancar tanpa ribet\"\n  },\n  \"job\": {\n    \"statement\": \"Ketika saya menyiapkan pernikahan, saya ingin urusan konsumsi tamu ditangani pihak profesional, supaya saya bisa fokus ke hal lain di hari besar itu.\"\n  },\n  \"solutionCategory\": {\n    \"name\": \"Jasa Katering Pernikahan\",\n    \"keywords\": [\n      \"katering\",\n      \"wedding\",\n      \"pernikahan\",\n      \"catering\"\n    ]\n  },\n  \"relevance\": 1,\n  \"clarifyingQuestions\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

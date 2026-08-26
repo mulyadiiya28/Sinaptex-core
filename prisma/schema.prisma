@@ -1,0 +1,1231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String   @id @default(uuid())
+  supabaseId String   @unique
+  email      String   @unique
+  phone      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  profile    Profile?
+
+  @@map("users")
+}
+
+model Profile {
+  id                         String                    @id @default(uuid())
+  userId                     String                    @unique
+  fullName                   String
+  avatarUrl                  String?
+  bio                        String?
+  location                   String?
+  phone                      String?
+  accountStatus              AccountStatus             @default(ACTIVE)
+  suspendedReason            String?
+  suspendedAt                DateTime?
+  profileType                ProfileType               @default(INDIVIDUAL)
+  reputationScore            Float                     @default(0)
+  responseScore              Float                     @default(0)
+  completionScore            Float                     @default(0)
+  activityScore              Float                     @default(0)
+  verificationScore          Float                     @default(0)
+  trustScore                 Float                     @default(0)
+  verificationStatus         VerificationStatus        @default(UNVERIFIED)
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  businessDiagnoses          BusinessDiagnosis[]
+  businessRoles              BusinessRole[]
+  conversationParticipations ConversationParticipant[]
+  decisionInquiries          DecisionInquiry[]
+  intentLogs                 IntentLog[]
+  media                      Media[]
+  membership                 Membership?
+  messagesSent               Message[]
+  notifications              Notification[]
+  parties                    Party[]
+  user                       User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedbacks                  RecommendationFeedback[]
+  reviewsReceived            Review[]                  @relation("RevieweeProfile")
+  reviewsGiven               Review[]                  @relation("ReviewerProfile")
+  reportsReceived            UserReport[]              @relation("ReportReported")
+  reportsMade                UserReport[]              @relation("ReportReporter")
+  verifications              VerificationDocument[]
+
+  @@map("profiles")
+}
+
+model BusinessRole {
+  id        String           @id @default(uuid())
+  profileId String
+  partyId   String?
+  role      BusinessRoleType
+  createdAt DateTime         @default(now())
+  party     Party?           @relation(fields: [partyId], references: [id])
+  profile   Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, role, partyId])
+  @@map("business_roles")
+}
+
+model Party {
+  id                 String                 @id @default(uuid())
+  ownerId            String
+  name               String
+  isCompany          Boolean                @default(true)
+  categoryId         String?
+  description        String?
+  logoUrl            String?
+  location           String?
+  npwp               String?
+  nib                String?
+  verificationStatus VerificationStatus     @default(UNVERIFIED)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  businessDiagnoses  BusinessDiagnosis[]
+  businessRoles      BusinessRole[]
+  invitationsFrom    Invitation[]           @relation("InvitationFromParty")
+  invitationsTo      Invitation[]           @relation("InvitationToParty")
+  media              Media[]
+  opportunities      Opportunity[]
+  category           Category?              @relation(fields: [categoryId], references: [id])
+  owner              Profile                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  capabilities       PartyCapability[]
+  verifications      VerificationDocument[]
+
+  @@map("parties")
+}
+
+model Capability {
+  id            String                  @id @default(uuid())
+  name          String                  @unique
+  createdAt     DateTime                @default(now())
+  opportunities OpportunityCapability[]
+  parties       PartyCapability[]
+  symptoms      BusinessSymptom[]       @relation("BusinessSymptomToCapability")
+
+  @@map("capabilities")
+}
+
+model PartyCapability {
+  id           String     @id @default(uuid())
+  partyId      String
+  capabilityId String
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  party        Party      @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@unique([partyId, capabilityId])
+  @@map("party_capabilities")
+}
+
+model Category {
+  id            String        @id @default(uuid())
+  name          String        @unique
+  parentId      String?
+  parent        Category?     @relation("CategoryTree", fields: [parentId], references: [id])
+  children      Category[]    @relation("CategoryTree")
+  opportunities Opportunity[]
+  parties       Party[]
+
+  @@map("categories")
+}
+
+model VerificationDocument {
+  id           String             @id @default(uuid())
+  profileId    String?
+  partyId      String?
+  type         DocumentType
+  fileUrl      String
+  cloudinaryId String?
+  fileHash     String?
+  status       VerificationStatus @default(UNVERIFIED)
+  rejectReason String?
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  party        Party?             @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  profile      Profile?           @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([fileHash])
+  @@map("verification_documents")
+}
+
+model Opportunity {
+  id             String                  @id @default(uuid())
+  partyId        String
+  type           OpportunityType
+  categoryId     String?
+  title          String
+  description    String
+  location       String?
+  budgetMin      Float?
+  budgetMax      Float?
+  tags           String[]                @default([])
+  priority       PriorityLevel           @default(MEDIUM)
+  visibility     Visibility              @default(PUBLIC)
+  status         OpportunityStatus       @default(ACTIVE)
+  expiresAt      DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  invitations    Invitation[]
+  matchesAsNeed  Match[]                 @relation("NeedOpportunity")
+  matchesAsOffer Match[]                 @relation("OfferOpportunity")
+  media          Media[]
+  category       Category?               @relation(fields: [categoryId], references: [id])
+  party          Party                   @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  boost          OpportunityBoost?
+  capabilities   OpportunityCapability[]
+
+  @@index([type, status, visibility])
+  @@map("opportunities")
+}
+
+model OpportunityCapability {
+  id            String      @id @default(uuid())
+  opportunityId String
+  capabilityId  String
+  capability    Capability  @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, capabilityId])
+  @@map("opportunity_capabilities")
+}
+
+model Media {
+  id            String         @id @default(uuid())
+  ownerType     MediaOwnerType
+  opportunityId String?
+  profileId     String?
+  partyId       String?
+  url           String
+  cloudinaryId  String
+  format        String?
+  createdAt     DateTime       @default(now())
+  opportunity   Opportunity?   @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  party         Party?         @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  profile       Profile?       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("media")
+}
+
+model BoostPlan {
+  id             String             @id @default(uuid())
+  type           BoostPackageType   @unique
+  name           String
+  priorityWeight Float
+  price          Float
+  durationDays   Int
+  boosts         OpportunityBoost[]
+
+  @@map("boost_plans")
+}
+
+model OpportunityBoost {
+  id             String        @id @default(uuid())
+  opportunityId  String        @unique
+  planId         String
+  priorityWeight Float
+  startAt        DateTime      @default(now())
+  expiredAt      DateTime
+  paymentStatus  PaymentStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  opportunity    Opportunity   @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  plan           BoostPlan     @relation(fields: [planId], references: [id])
+
+  @@map("opportunity_boosts")
+}
+
+model Match {
+  id               String      @id @default(uuid())
+  needId           String
+  offerId          String
+  hardFilterPassed Boolean
+  matchScore       Float
+  finalScore       Float?
+  breakdown        Json
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  invitation       Invitation?
+  need             Opportunity @relation("NeedOpportunity", fields: [needId], references: [id], onDelete: Cascade)
+  offer            Opportunity @relation("OfferOpportunity", fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@unique([needId, offerId])
+  @@index([finalScore])
+  @@map("matches")
+}
+
+model Invitation {
+  id            String           @id @default(uuid())
+  matchId       String           @unique
+  opportunityId String
+  fromPartyId   String
+  toPartyId     String
+  status        InvitationStatus @default(PENDING)
+  matchScore    Float
+  breakdown     Json
+  message       String?
+  respondedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  deal          Deal?
+  fromParty     Party            @relation("InvitationFromParty", fields: [fromPartyId], references: [id], onDelete: Cascade)
+  match         Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  opportunity   Opportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  toParty       Party            @relation("InvitationToParty", fields: [toPartyId], references: [id], onDelete: Cascade)
+
+  @@map("invitations")
+}
+
+model Deal {
+  id           String     @id @default(uuid())
+  invitationId String     @unique
+  status       DealStatus @default(NEGOTIATION)
+  agreedTerms  Json?
+  notes        String?
+  startAt      DateTime?
+  endAt        DateTime?
+  cancelReason String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  invitation   Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  reviews      Review[]
+
+  @@map("deals")
+}
+
+model Review {
+  id           String   @id @default(uuid())
+  dealId       String
+  reviewerId   String
+  revieweeId   String
+  rating       Int
+  comment      String?
+  hidden       Boolean  @default(false)
+  hiddenReason String?
+  createdAt    DateTime @default(now())
+  deal         Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  reviewee     Profile  @relation("RevieweeProfile", fields: [revieweeId], references: [id], onDelete: Cascade)
+  reviewer     Profile  @relation("ReviewerProfile", fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@unique([dealId, reviewerId])
+  @@map("reviews")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  profileId String
+  type      String
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model Country {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  code      String     @unique
+  provinces Province[]
+
+  @@map("countries")
+}
+
+model Province {
+  id        String  @id @default(uuid())
+  name      String
+  countryId String
+  cities    City[]
+  country   Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, name])
+  @@map("provinces")
+}
+
+model City {
+  id         String   @id @default(uuid())
+  name       String
+  provinceId String
+  province   Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  @@unique([provinceId, name])
+  @@map("cities")
+}
+
+model Currency {
+  id     String @id @default(uuid())
+  code   String @unique
+  name   String
+  symbol String
+
+  @@map("currencies")
+}
+
+model Language {
+  id   String @id @default(uuid())
+  code String @unique
+  name String
+
+  @@map("languages")
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  @@map("tags")
+}
+
+/// Cache hasil deteksi hubungan antar Party supaya tidak perlu dihitung ulang
+/// setiap kali (mis. SAME_OWNER jarang berubah). Diisi otomatis oleh
+/// fraud.service.js saat terdeteksi, dan bisa juga diinput manual oleh admin
+/// untuk kasus DECLARED_AFFILIATE.
+model PartyRelationship {
+  id         String                @id @default(uuid())
+  partyAId   String
+  partyBId   String
+  type       PartyRelationshipType
+  confidence Float                 @default(1)
+  note       String?
+  detectedAt DateTime              @default(now())
+
+  @@unique([partyAId, partyBId, type])
+  @@index([partyAId])
+  @@index([partyBId])
+  @@map("party_relationships")
+}
+
+/// Insiden yang ditandai Fraud Detection Engine — hasil pemeriksaan otomatis
+/// saat Deal hendak diselesaikan (COMPLETED), atau dari scan periodik.
+model FraudFlag {
+  id           String          @id @default(uuid())
+  dealId       String?
+  invitationId String?
+  partyAId     String
+  partyBId     String
+  severity     FraudSeverity
+  reasonCode   String
+  details      Json
+  riskScore    Int
+  status       FraudFlagStatus @default(PENDING_REVIEW)
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  createdAt    DateTime        @default(now())
+
+  @@index([dealId])
+  @@index([partyAId])
+  @@index([partyBId])
+  @@index([status])
+  @@map("fraud_flags")
+}
+
+/// Akar masalah tingkat tinggi (mis. "Kehilangan penjualan karena follow-up manual
+/// tidak konsisten", "Butuh tempat tinggal & keamanan finansial").
+model RootProblem {
+  id          String        @id @default(uuid())
+  name        String        @unique
+  description String?
+  createdAt   DateTime      @default(now())
+  jobs        JobToBeDone[]
+
+  @@map("root_problems")
+}
+
+/// "Job" dalam istilah Jobs-to-be-Done: kebutuhan fungsional/emosional/sosial
+/// yang SEBENARNYA ingin dipenuhi orang, ditulis dalam format kanonik
+/// "Ketika [situasi], saya ingin [motivasi], supaya [hasil yang diinginkan]".
+model JobToBeDone {
+  id                  String                @id @default(uuid())
+  rootProblemId       String
+  statement           String
+  createdAt           DateTime              @default(now())
+  businessDecisions   BusinessDecision[]
+  clarifyingQuestions ClarifyingQuestion[]
+  inquiries           DecisionInquiry[]
+  rootProblem         RootProblem           @relation(fields: [rootProblemId], references: [id], onDelete: Cascade)
+  solutionMappings    SolutionCategoryJob[]
+
+  @@map("jobs_to_be_done")
+}
+
+/// Apa yang ORANG SEBUT secara literal saat mereka bertanya (mis. "CRM Software",
+/// "Bor Listrik", "Rumah/Properti") — dipetakan ke satu/lebih JobToBeDone di bawah.
+model SolutionCategory {
+  id          String                @id @default(uuid())
+  name        String                @unique
+  keywords    String[]              @default([])
+  createdAt   DateTime              @default(now())
+  domainId    String?
+  inquiries   DecisionInquiry[]
+  domain      Domain?               @relation(fields: [domainId], references: [id])
+  jobMappings SolutionCategoryJob[]
+
+  @@map("solution_categories")
+}
+
+/// Many-to-many SolutionCategory <-> JobToBeDone, dengan bobot relevansi.
+/// Satu SolutionCategory (mis. "Rumah") bisa memetakan ke BEBERAPA Job berbeda
+/// (tempat berteduh / pengakuan sosial / investasi) — di sinilah ambiguitas
+/// yang perlu diklarifikasi lewat ClarifyingQuestion.
+model SolutionCategoryJob {
+  id                 String           @id @default(uuid())
+  solutionCategoryId String
+  jobId              String
+  relevance          Float            @default(1)
+  job                JobToBeDone      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  solutionCategory   SolutionCategory @relation(fields: [solutionCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([solutionCategoryId, jobId])
+  @@map("solution_category_jobs")
+}
+
+/// Pertanyaan klarifikasi berbasis data (BUKAN digenerate on-the-fly oleh AI)
+/// untuk membedakan Job mana yang sebenarnya relevan ketika satu SolutionCategory
+/// punya beberapa kemungkinan Job.
+model ClarifyingQuestion {
+  id        String                  @id @default(uuid())
+  jobId     String
+  question  String
+  order     Int                     @default(0)
+  createdAt DateTime                @default(now())
+  job       JobToBeDone             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  answers   DecisionInquiryAnswer[]
+
+  @@map("clarifying_questions")
+}
+
+/// Satu sesi diagnosis: dari permintaan mentah user ("saya butuh CRM") sampai
+/// Job yang terdiagnosis + skor keyakinan + status kecukupan data.
+model DecisionInquiry {
+  id                        String                   @id @default(uuid())
+  profileId                 String?
+  statedWant                String
+  matchedSolutionCategoryId String?
+  diagnosedJobId            String?
+  confidenceScore           Float                    @default(0)
+  dataSufficiency           DataSufficiency          @default(INSUFFICIENT)
+  status                    DecisionInquiryStatus    @default(OPEN)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  diagnosedJob              JobToBeDone?             @relation(fields: [diagnosedJobId], references: [id])
+  matchedSolutionCategory   SolutionCategory?        @relation(fields: [matchedSolutionCategoryId], references: [id])
+  profile                   Profile?                 @relation(fields: [profileId], references: [id])
+  answers                   DecisionInquiryAnswer[]
+  recommendations           DecisionRecommendation[]
+
+  @@index([profileId])
+  @@index([status])
+  @@map("decision_inquiries")
+}
+
+model DecisionInquiryAnswer {
+  id         String             @id @default(uuid())
+  inquiryId  String
+  questionId String
+  answer     String
+  createdAt  DateTime           @default(now())
+  inquiry    DecisionInquiry    @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  question   ClarifyingQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([inquiryId, questionId])
+  @@map("decision_inquiry_answers")
+}
+
+/// Hasil akhir: bisa berupa rekomendasi Opportunity NYATA yang ada di platform,
+/// ATAU (kalau tidak ada) sebuah "data gap alert" yang jujur — engine ini tidak
+/// pernah mengarang solusi yang tidak benar-benar tersedia sebagai Need/Offer.
+/// `opportunityId` sengaja String biasa tanpa @relation (pola sama seperti
+/// FraudFlag) untuk menghindari menambah relasi baru ke model Opportunity yang
+/// sudah kompleks; integritas ditangani di application code.
+model DecisionRecommendation {
+  id             String          @id @default(uuid())
+  inquiryId      String
+  opportunityId  String?
+  reasoning      String
+  confidence     Float
+  isDataGapAlert Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  inquiry        DecisionInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@index([inquiryId])
+  @@map("decision_recommendations")
+}
+
+/// Titik masuk: gejala bisnis yang dirasakan user (mis. "Penjualan Menurun").
+/// Beda dengan SolutionCategory (Phase 19) yang merepresentasikan ISTILAH
+/// PRODUK — ini merepresentasikan GEJALA/SIMPTOM.
+/// DOMAIN DETECTION (baru): scoping opsional per industri. `domainId` NULLABLE
+/// dengan sengaja — symptom tanpa domain dianggap "universal/lintas-industri"
+/// (semua contoh seed sejauh ini bersifat universal). Admin bisa mempersempit
+/// ke industri tertentu bertahap tanpa migrasi paksa data lama.
+model Domain {
+  id                 String             @id @default(uuid())
+  name               String             @unique
+  description        String?
+  createdAt          DateTime           @default(now())
+  symptoms           BusinessSymptom[]
+  solutionCategories SolutionCategory[]
+
+  @@map("domains")
+}
+
+model BusinessSymptom {
+  id           String              @id @default(uuid())
+  name         String              @unique
+  description  String?
+  createdAt    DateTime            @default(now())
+  domainId     String?
+  diagnoses    BusinessDiagnosis[]
+  rootCauses   BusinessRootCause[]
+  domain       Domain?             @relation(fields: [domainId], references: [id])
+  factors      DiagnosticFactor[]
+  patterns     DiagnosticPattern[]
+  rules        DiagnosticRule[]
+  capabilities Capability[]        @relation("BusinessSymptomToCapability")
+
+  @@map("business_symptoms")
+}
+
+/// PATTERN DETECTION (baru): pustaka pola/kasus berulang yang admin kenali
+/// (mis. "Musim Sepi Tahunan"). BERSIFAT INFORMASIONAL SAJA untuk saat ini —
+/// dideteksi lewat keyword lookup deterministik (sama teknik dengan
+/// SolutionCategory Phase 19) dan ditempel ke BusinessDiagnosis untuk
+/// transparansi (lihat Explainable Result), TIDAK mengubah urutan evaluasi
+/// DiagnosticRule secara diam-diam — supaya perilaku sistem tetap bisa
+/// diprediksi dan diaudit.
+model DiagnosticPattern {
+  id          String              @id @default(uuid())
+  symptomId   String
+  name        String
+  description String
+  keywords    String[]            @default([])
+  createdAt   DateTime            @default(now())
+  diagnoses   BusinessDiagnosis[]
+  symptom     BusinessSymptom     @relation(fields: [symptomId], references: [id], onDelete: Cascade)
+
+  @@map("diagnostic_patterns")
+}
+
+/// Satu data poin terukur yang jadi bukti diagnosis (mis. "Conversion Rate 30
+/// Hari Terakhir", "Skor Sentimen Review"). `autoSourceKey` merujuk ke fungsi
+/// resolver di src/modules/business-diagnosis/metricsResolver.js yang tahu
+/// cara menghitungnya dari data Party — kalau tidak berhasil dihitung (data
+/// platform belum cukup), engine jatuh balik minta MANUAL_INPUT, bukan mengarang.
+model DiagnosticFactor {
+  id            String                         @id @default(uuid())
+  symptomId     String
+  name          String
+  dataType      DiagnosticDataType
+  sourceType    DiagnosticFactorSource
+  autoSourceKey String?
+  unit          String?
+  order         Int                            @default(0)
+  createdAt     DateTime                       @default(now())
+  values        BusinessDiagnosisFactorValue[]
+  symptom       BusinessSymptom                @relation(fields: [symptomId], references: [id], onDelete: Cascade)
+
+  @@map("diagnostic_factors")
+}
+
+/// PURE output Diagnosis Engine — HANYA akar masalah + penjelasan berbasis data.
+/// Keputusan "apa yang harus dilakukan soal ini" (advisory/match/JTBD) SENGAJA
+/// dipisah ke model `BusinessDecision` di bawah — single responsibility: Diagnosis
+/// Engine cuma menjawab "apa akar masalahnya", bukan "apa yang harus dilakukan".
+model BusinessRootCause {
+  id          String              @id @default(uuid())
+  symptomId   String
+  name        String
+  explanation String
+  createdAt   DateTime            @default(now())
+  decision    BusinessDecision?
+  diagnoses   BusinessDiagnosis[]
+  symptom     BusinessSymptom     @relation(fields: [symptomId], references: [id], onDelete: Cascade)
+  rules       DiagnosticRule[]
+
+  @@map("business_root_causes")
+}
+
+/// Output Business DECISION Engine (bukan Diagnosis Engine) — 1:1 dengan satu
+/// BusinessRootCause. Di sinilah keputusan "cukup saran (ADVISORY_ONLY), perlu
+/// dicarikan solusi marketplace (MATCH_OPPORTUNITY), atau dua-duanya (HYBRID)"
+/// ditentukan, dan JobToBeDone (JTBD) dikaitkan — konsisten dengan Decision
+/// Engine Phase 19 yang juga berbasis JobToBeDone untuk permintaan langsung.
+model BusinessDecision {
+  id                 String             @id @default(uuid())
+  rootCauseId        String             @unique
+  recommendationType RecommendationType
+  jobId              String?
+  createdAt          DateTime           @default(now())
+  advisoryContents   AdvisoryContent[]
+  job                JobToBeDone?       @relation(fields: [jobId], references: [id])
+  rootCause          BusinessRootCause  @relation(fields: [rootCauseId], references: [id], onDelete: Cascade)
+
+  @@map("business_decisions")
+}
+
+/// Aturan deterministik (BUKAN AI generatif): kombinasi kondisi atas beberapa
+/// DiagnosticFactor yang, kalau SEMUA terpenuhi, menyimpulkan BusinessRootCause
+/// tertentu. `conditions` berisi array [{factorId, operator, value}] — semua
+/// harus match (AND). `priority` menentukan urutan evaluasi kalau ada rule yang
+/// tumpang tindih (angka lebih kecil dievaluasi lebih dulu).
+model DiagnosticRule {
+  id          String            @id @default(uuid())
+  symptomId   String
+  rootCauseId String
+  conditions  Json
+  priority    Int               @default(0)
+  createdAt   DateTime          @default(now())
+  rootCause   BusinessRootCause @relation(fields: [rootCauseId], references: [id], onDelete: Cascade)
+  symptom     BusinessSymptom   @relation(fields: [symptomId], references: [id], onDelete: Cascade)
+
+  @@map("diagnostic_rules")
+}
+
+/// Bank saran ADVISORY_ONLY/HYBRID. WAJIB `status = PUBLISHED` sebelum boleh
+/// ditampilkan ke user — draft (termasuk draft dari AI eksternal, ditandai
+/// `authorType = AI_DRAFT`) tidak pernah dikirim ke end user sebelum direview.
+model AdvisoryContent {
+  id              String                            @id @default(uuid())
+  decisionId      String
+  title           String
+  body            String
+  authorType      AdvisoryAuthorType                @default(ADMIN)
+  status          AdvisoryStatus                    @default(DRAFT)
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  createdAt       DateTime                          @default(now())
+  updatedAt       DateTime                          @updatedAt
+  decision        BusinessDecision                  @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  recommendations BusinessDiagnosisRecommendation[]
+
+  @@map("advisory_contents")
+}
+
+/// Satu sesi diagnosis bisnis: dari BusinessSymptom yang dipilih user, sampai
+/// BusinessRootCause yang terdiagnosis (atau INSUFFICIENT_DATA kalau basis
+/// pengetahuan tidak menjangkau kombinasi datanya).
+model BusinessDiagnosis {
+  id                   String                            @id @default(uuid())
+  profileId            String?
+  partyId              String?
+  symptomId            String
+  diagnosedRootCauseId String?
+  matchedPatternId     String?
+  confidenceScore      Float                             @default(0)
+  status               BusinessDiagnosisStatus           @default(DATA_COLLECTION)
+  createdAt            DateTime                          @default(now())
+  updatedAt            DateTime                          @updatedAt
+  diagnosedRootCause   BusinessRootCause?                @relation(fields: [diagnosedRootCauseId], references: [id])
+  matchedPattern       DiagnosticPattern?                @relation(fields: [matchedPatternId], references: [id])
+  party                Party?                            @relation(fields: [partyId], references: [id])
+  profile              Profile?                          @relation(fields: [profileId], references: [id])
+  symptom              BusinessSymptom                   @relation(fields: [symptomId], references: [id])
+  factorValues         BusinessDiagnosisFactorValue[]
+  recommendations      BusinessDiagnosisRecommendation[]
+
+  @@index([profileId])
+  @@index([partyId])
+  @@index([status])
+  @@map("business_diagnoses")
+}
+
+model BusinessDiagnosisFactorValue {
+  id          String                 @id @default(uuid())
+  diagnosisId String
+  factorId    String
+  value       String
+  source      DiagnosticFactorSource
+  createdAt   DateTime               @default(now())
+  diagnosis   BusinessDiagnosis      @relation(fields: [diagnosisId], references: [id], onDelete: Cascade)
+  factor      DiagnosticFactor       @relation(fields: [factorId], references: [id], onDelete: Cascade)
+
+  @@unique([diagnosisId, factorId])
+  @@map("business_diagnosis_factor_values")
+}
+
+/// Hasil akhir: ADVISORY (saran murni, `advisoryContentId` terisi) dan/atau
+/// OPPORTUNITY_MATCH (`opportunityId` terisi — String biasa tanpa @relation,
+/// pola sama dengan FraudFlag/DecisionRecommendation). Kalau RootCause-nya
+/// MATCH_OPPORTUNITY tapi tidak ada Opportunity nyata yang cocok, dibuat satu
+/// baris dengan `opportunityId: null` + reasoning jujur (data-gap), sama seperti
+/// prinsip di DecisionRecommendation Phase 19.
+model BusinessDiagnosisRecommendation {
+  id                String             @id @default(uuid())
+  diagnosisId       String
+  type              RecommendationType
+  advisoryContentId String?
+  opportunityId     String?
+  isDataGapAlert    Boolean            @default(false)
+  reasoning         String
+  confidence        Float
+  createdAt         DateTime           @default(now())
+  advisoryContent   AdvisoryContent?   @relation(fields: [advisoryContentId], references: [id])
+  diagnosis         BusinessDiagnosis  @relation(fields: [diagnosisId], references: [id], onDelete: Cascade)
+
+  @@index([diagnosisId])
+  @@map("business_diagnosis_recommendations")
+}
+
+model IntentLog {
+  id             String         @id @default(uuid())
+  profileId      String?
+  rawText        String
+  category       IntentCategory
+  subtype        String?
+  matchedPattern String?
+  routedTo       String?
+  createdAt      DateTime       @default(now())
+  profile        Profile?       @relation(fields: [profileId], references: [id])
+
+  @@index([category])
+  @@index([profileId])
+  @@map("intent_logs")
+}
+
+model RecommendationFeedback {
+  id                 String   @id @default(uuid())
+  profileId          String?
+  recommendationId   String
+  recommendationType String
+  rating             Int
+  comment            String?
+  createdAt          DateTime @default(now())
+  profile            Profile? @relation(fields: [profileId], references: [id])
+
+  @@index([recommendationId])
+  @@index([recommendationType])
+  @@map("recommendation_feedbacks")
+}
+
+/// Container percakapan — SENGAJA tidak punya kolom participant hardcode
+/// (participantAId/participantBId). Daftar peserta ada di ConversationParticipant
+/// supaya siap dipakai buat group chat nanti tanpa migrasi ulang skema.
+model Conversation {
+  id            String                    @id @default(uuid())
+  originType    ConversationOriginType    @default(PROFILE)
+  opportunityId String?
+  lastMessageAt DateTime?
+  createdAt     DateTime                  @default(now())
+  participants  ConversationParticipant[]
+  messages      Message[]
+
+  @@map("conversations")
+}
+
+/// Satu baris per (Conversation, Profile) — read status, join state, dan
+/// preferensi (mute/archive/delete) per-partisipan hidup di sini, BUKAN di
+/// kolom Conversation langsung. Untuk chat 1:1 (MVP saat ini) selalu ada
+/// tepat 2 baris per Conversation; group chat nanti tinggal tambah baris lagi
+/// tanpa ubah skema.
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  participantId  String
+  lastReadAt     DateTime?
+  joinedAt       DateTime     @default(now())
+  muted          Boolean      @default(false)
+  archived       Boolean      @default(false)
+  deleted        Boolean      @default(false)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  participant    Profile      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, participantId])
+  @@index([participantId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  senderId       String
+  type           MessageType  @default(TEXT)
+  content        String?
+  mediaUrl       String?
+  mediaName      String?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Profile      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// Membership = PRODUK yang dijual (Gold, Silver, Enterprise) — nama, durasi,
+/// fitur. SENGAJA TIDAK punya harga di sini (lihat MembershipPricing) supaya
+/// mengubah harga tidak mengubah histori invoice yang sudah terbit.
+model MembershipPlan {
+  id             String                  @id @default(uuid())
+  name           String                  @unique
+  durationDays   Int
+  features       Json?
+  createdAt      DateTime                @default(now())
+  pricingHistory MembershipPricing[]
+  transactions   MembershipTransaction[]
+
+  @@map("membership_plans")
+}
+
+/// Pricing = ATURAN HARGA produk, terpisah dari definisi produknya. Satu Plan
+/// bisa punya banyak baris pricing (histori) — hanya SATU yang `status: ACTIVE`
+/// pada satu waktu (ditegakkan di pricing.service.js, bukan constraint DB, supaya
+/// transisi harga lama->baru bisa 1 transaksi DB yang jelas). PricingService
+/// (src/modules/pricing/pricing.service.js) adalah SATU-SATUNYA cara modul lain
+/// (Membership, nanti Featured Offer/AI Credit) menghitung harga akhir — lihat
+/// docs/business-decision-philosophy.md N/A; lihat catatan arsitektur di
+/// PROJECT_CHECKLIST.md untuk hierarki penuh System > Membership/Pricing/Payment.
+model MembershipPricing {
+  id             String                  @id @default(uuid())
+  planId         String
+  price          Float
+  currency       String                  @default("IDR")
+  effectiveFrom  DateTime                @default(now())
+  effectiveUntil DateTime?
+  status         PricingStatus           @default(ACTIVE)
+  createdAt      DateTime                @default(now())
+  plan           MembershipPlan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  transactions   MembershipTransaction[]
+
+  @@index([planId, status])
+  @@map("membership_pricings")
+}
+
+/// Current state membership seorang Profile — 1:1. Historical
+/// pembayaran/renewal ada di MembershipTransaction, bukan di sini.
+model Membership {
+  id           String                  @id @default(uuid())
+  profileId    String                  @unique
+  status       MembershipStatus        @default(INACTIVE)
+  activatedAt  DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  transactions MembershipTransaction[]
+  profile      Profile                 @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("memberships")
+}
+
+model MembershipTransaction {
+  id                   String                      @id @default(uuid())
+  membershipId         String
+  planId               String
+  pricingId            String?
+  amount               Float
+  status               MembershipTransactionStatus @default(PENDING)
+  invoiceNumber        String                      @unique
+  idempotencyKey       String?                     @unique
+  gatewayProvider      PaymentProvider             @default(MIDTRANS)
+  paymentMethod        PaymentMethod?
+  gatewayTransactionId String?
+  gatewayRedirectUrl   String?
+  gatewayRawPayload    Json?
+  paidAt               DateTime?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  membership           Membership                  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  plan                 MembershipPlan              @relation(fields: [planId], references: [id])
+  pricing              MembershipPricing?          @relation(fields: [pricingId], references: [id])
+
+  @@index([membershipId])
+  @@index([status])
+  @@map("membership_transactions")
+}
+
+model UserReport {
+  id          String       @id @default(uuid())
+  reporterId  String
+  reportedId  String
+  reason      String
+  description String?
+  status      ReportStatus @default(PENDING)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  adminNote   String?
+  createdAt   DateTime     @default(now())
+  reported    Profile      @relation("ReportReported", fields: [reportedId], references: [id], onDelete: Cascade)
+  reporter    Profile      @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([reportedId])
+  @@index([status])
+  @@map("user_reports")
+}
+
+model StaticPage {
+  id        String        @id @default(uuid())
+  slug      String        @unique
+  title     String
+  content   String
+  status    ContentStatus @default(DRAFT)
+  updatedBy String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("static_pages")
+}
+
+model FaqItem {
+  id        String        @id @default(uuid())
+  question  String
+  answer    String
+  order     Int           @default(0)
+  status    ContentStatus @default(DRAFT)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("faq_items")
+}
+
+enum ProfileType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum MembershipStatus {
+  INACTIVE
+  ACTIVE
+  EXPIRED
+}
+
+enum BusinessRoleType {
+  BUYER
+  SUPPLIER
+  INVESTOR
+  STARTUP
+  PARTNER
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum DocumentType {
+  KTP
+  NIB
+  NPWP
+  SERTIFIKAT
+  LAINNYA
+}
+
+enum OpportunityType {
+  NEED
+  OFFER
+}
+
+enum OpportunityStatus {
+  DRAFT
+  ACTIVE
+  MATCHED
+  CLOSED
+  EXPIRED
+}
+
+enum Visibility {
+  PUBLIC
+  PRIVATE
+  VERIFIED_ONLY
+}
+
+enum PriorityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum BoostPackageType {
+  FREE
+  BASIC
+  PREMIUM
+  VIP
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum DealStatus {
+  NEGOTIATION
+  DEAL
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum MediaOwnerType {
+  OPPORTUNITY
+  VERIFICATION
+  PROFILE
+  PARTY
+}
+
+enum PartyRelationshipType {
+  SAME_OWNER
+  SHARED_LEGAL_ID
+  SHARED_DOCUMENT
+  DECLARED_AFFILIATE
+  SUSPECTED_COLLUSION
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FraudFlagStatus {
+  PENDING_REVIEW
+  CONFIRMED
+  DISMISSED
+}
+
+enum DataSufficiency {
+  INSUFFICIENT
+  PARTIAL
+  SUFFICIENT
+}
+
+enum DecisionInquiryStatus {
+  OPEN
+  DIAGNOSED
+  RECOMMENDED
+  CLOSED_NO_DATA
+}
+
+enum DiagnosticDataType {
+  NUMERIC
+  PERCENTAGE
+  BOOLEAN
+  CATEGORICAL
+}
+
+enum DiagnosticFactorSource {
+  AUTO_PLATFORM
+  MANUAL_INPUT
+}
+
+enum DiagnosticOperator {
+  LT
+  LTE
+  GT
+  GTE
+  EQ
+  NEQ
+  IS_TRUE
+  IS_FALSE
+  IN
+}
+
+enum RecommendationType {
+  ADVISORY_ONLY
+  MATCH_OPPORTUNITY
+  HYBRID
+}
+
+enum AdvisoryStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AdvisoryAuthorType {
+  ADMIN
+  AI_DRAFT
+}
+
+enum BusinessDiagnosisStatus {
+  DATA_COLLECTION
+  DIAGNOSED
+  INSUFFICIENT_DATA
+}
+
+enum IntentCategory {
+  DIRECT_SEARCH
+  NEEDS_DIAGNOSIS
+  AMBIGUOUS
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  ATTACHMENT
+}
+
+enum ConversationOriginType {
+  PROFILE
+  NEED
+  OFFER
+}
+
+enum PricingStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentProvider {
+  MIDTRANS
+  XENDIT
+  DUITKU
+  STRIPE
+}
+
+enum PaymentMethod {
+  QRIS
+  BANK_TRANSFER
+  VA
+  EWALLET
+  CREDIT_CARD
+}
+
+enum MembershipTransactionStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  DISMISSED
+  ACTION_TAKEN
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+}

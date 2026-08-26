@@ -1,0 +1,54 @@
+version: '3.9'
+
+# NOTE: Database is Supabase-hosted (external) — DATABASE_URL/DIRECT_URL in .env
+# point there, so no local Postgres service is defined here. Redis is local/optional
+# (cache & BullMQ queue both fail-safe if this is not running).
+
+services:
+  api:
+    build: .
+    ports:
+      - '4000:4000'
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  worker-party-stats:
+    build: .
+    command: node src/queue/partyStats.worker.js
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker-notification:
+    build: .
+    command: node src/queue/notification.worker.js
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: node src/jobs/scheduler.js
+    env_file: .env
+    restart: unless-stopped
+
+volumes:
+  redis-data:

@@ -1,0 +1,22 @@
+{
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "extends": ["airbnb-base", "prettier"],
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+  },
+  "rules": {
+    "no-console": "off",
+    "no-underscore-dangle": "off",
+    "consistent-return": "off",
+    "no-await-in-loop": "off",
+    "import/no-dynamic-require": "off",
+    "global-require": "off",
+    "camelcase": "off",
+    "no-param-reassign": ["error", { "props": false }],
+    "max-len": ["warn", { "code": 110, "ignoreComments": true, "ignoreStrings": true }]
+  }
+}

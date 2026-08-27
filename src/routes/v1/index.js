@@ -10,7 +10,7 @@ router.use('/content', require('../../modules/content/content.routes'));
  * PHASE 1 : ENTRY POINT
  * ============================================================ */
 // Health check stays unversioned (infra/monitoring tooling shouldn't need to track API versions)
-router.get('/health', require('./health.route'));
+router.get('/health', require('../../health.route'));
 
 // Semua request bisnis (bahasa bebas) masuk dari sini — lihat src/modules/intent/.
 router.use('/intent', require('../../modules/intent/intent.routes'));

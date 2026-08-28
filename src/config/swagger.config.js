@@ -11,7 +11,7 @@ module.exports = {
     },
     servers: [
       { 
-        url: 'https://cahayaastera.com', 
+        url: 'https://cahayaastera.com/api/v1', 
         description: 'Production' 
       },
       { 

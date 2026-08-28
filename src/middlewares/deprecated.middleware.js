@@ -33,3 +33,5 @@ const deprecated = (message, replacementPath) => (req, res, next) => {
 
   next();
 };
+
+module.exports = deprecated;

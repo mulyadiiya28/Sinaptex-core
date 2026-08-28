@@ -30,14 +30,16 @@ async function findDirectConversation(profileIdA, profileIdB) {
     select: { conversationId: true },
   });
 
-  for (const candidate of candidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const count = await prisma.conversationParticipant.count({
-      where: { conversationId: candidate.conversationId },
-    });
-    if (count === 2) return candidate.conversationId; // 1:1 murni, bukan (calon) group chat
-  }
-  return null;
+  const directConversationIds = await Promise.all(
+    candidates.map(async (candidate) => {
+      const count = await prisma.conversationParticipant.count({
+        where: { conversationId: candidate.conversationId },
+      });
+      return count === 2 ? candidate.conversationId : null;
+    })
+  );
+
+  return directConversationIds.find(Boolean) || null;
 }
 
 async function getConversationParticipantIds(conversationId) {
@@ -50,7 +52,8 @@ async function getConversationParticipantIds(conversationId) {
 
 async function assertParticipant(conversationId, profileId) {
   const conversation = await prisma.conversation.findUnique({ where: { id: conversationId } });
-  if (!conversation) throw ApiError.notFound('Conversation not found', ErrorCodes.CONVERSATION_NOT_FOUND);
+  if (!conversation)
+    throw ApiError.notFound('Conversation not found', ErrorCodes.CONVERSATION_NOT_FOUND);
 
   const participantIds = await getConversationParticipantIds(conversationId);
   chatPolicy.assertCanView(participantIds, profileId);
@@ -62,7 +65,12 @@ async function assertParticipant(conversationId, profileId) {
  * Ambil Conversation yang sudah ada antara 2 Profile, atau buat baru kalau
  * belum ada — gating (lewat ConversationPolicy) HANYA berlaku saat membuat baru.
  */
-async function getOrStartConversation({ myProfileId, recipientProfileId, originType = 'PROFILE', opportunityId }) {
+async function getOrStartConversation({
+  myProfileId,
+  recipientProfileId,
+  originType = 'PROFILE',
+  opportunityId,
+}) {
   const existingId = await findDirectConversation(myProfileId, recipientProfileId);
   if (existingId) {
     const conversation = await prisma.conversation.findUnique({ where: { id: existingId } });
@@ -96,7 +104,9 @@ async function listMyConversations(profileId) {
     include: {
       conversation: {
         include: {
-          participants: { include: { participant: { select: { id: true, fullName: true, avatarUrl: true } } } },
+          participants: {
+            include: { participant: { select: { id: true, fullName: true, avatarUrl: true } } },
+          },
           messages: { orderBy: { createdAt: 'desc' }, take: 1 },
         },
       },
@@ -106,10 +116,14 @@ async function listMyConversations(profileId) {
 
   return participations.map((myParticipation) => {
     const c = myParticipation.conversation;
-    const counterpart = c.participants.find((p) => p.participantId !== profileId)?.participant || null;
+    const counterpart =
+      c.participants.find((p) => p.participantId !== profileId)?.participant || null;
     const lastMessage = c.messages[0] || null;
     const myLastReadAt = myParticipation.lastReadAt;
-    const unread = lastMessage && lastMessage.senderId !== profileId && (!myLastReadAt || lastMessage.createdAt > myLastReadAt);
+    const unread =
+      lastMessage &&
+      lastMessage.senderId !== profileId &&
+      (!myLastReadAt || lastMessage.createdAt > myLastReadAt);
 
     return {
       id: c.id,
@@ -145,14 +159,25 @@ async function getMessages({ conversationId, profileId, page = 1, limit = 30 }) 
  * (pesan teks). Efek samping (broadcast/notifikasi) TIDAK ditangani di sini —
  * cukup emit EVENTS.CHAT_MESSAGE_SENT, listener lain yang menindaklanjuti.
  */
-async function sendMessage({ conversationId, senderId, type = 'TEXT', content, mediaUrl, mediaName }) {
+async function sendMessage({
+  conversationId,
+  senderId,
+  type = 'TEXT',
+  content,
+  mediaUrl,
+  mediaName,
+}) {
   const { participantIds } = await assertParticipant(conversationId, senderId);
 
   if (type === 'TEXT' && !content?.trim()) {
     throw ApiError.badRequest('Pesan teks tidak boleh kosong', null, ErrorCodes.EMPTY_MESSAGE);
   }
   if ((type === 'IMAGE' || type === 'ATTACHMENT') && !mediaUrl) {
-    throw ApiError.badRequest('mediaUrl wajib diisi untuk pesan IMAGE/ATTACHMENT', null, ErrorCodes.VALIDATION_ERROR);
+    throw ApiError.badRequest(
+      'mediaUrl wajib diisi untuk pesan IMAGE/ATTACHMENT',
+      null,
+      ErrorCodes.VALIDATION_ERROR
+    );
   }
 
   const message = await prisma.message.create({
@@ -160,7 +185,10 @@ async function sendMessage({ conversationId, senderId, type = 'TEXT', content, m
     include: { sender: { select: { id: true, fullName: true, avatarUrl: true } } },
   });
 
-  await prisma.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: message.createdAt } });
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { lastMessageAt: message.createdAt },
+  });
 
   const recipientId = participantIds.find((id) => id !== senderId);
 
@@ -180,7 +208,11 @@ async function markAsRead({ conversationId, profileId }) {
   const participantIds = await getConversationParticipantIds(conversationId);
   const otherParticipantId = participantIds.find((id) => id !== profileId);
 
-  eventBus.emit(EVENTS.CHAT_CONVERSATION_READ, { conversationId, readBy: profileId, otherParticipantId });
+  eventBus.emit(EVENTS.CHAT_CONVERSATION_READ, {
+    conversationId,
+    readBy: profileId,
+    otherParticipantId,
+  });
 
   return { otherParticipantId };
 }

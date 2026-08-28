@@ -29,27 +29,27 @@ class ApiError extends Error {
     return new ApiError(400, message, details, code);
   }
 
-  static unauthorized(message = 'Unauthorized', code) {
+  static unauthorized(message = 'Unauthorized', code = null) {
     return new ApiError(401, message, null, code);
   }
 
-  static paymentRequired(message = 'Payment required', code) {
+  static paymentRequired(message = 'Payment required', code = null) {
     return new ApiError(402, message, null, code);
   }
 
-  static forbidden(message = 'Forbidden', code) {
+  static forbidden(message = 'Forbidden', code = null) {
     return new ApiError(403, message, null, code);
   }
 
-  static notFound(message = 'Resource not found', code) {
+  static notFound(message = 'Resource not found', code = null) {
     return new ApiError(404, message, null, code);
   }
 
-  static conflict(message = 'Conflict', details, code) {
+  static conflict(message = 'Conflict', details = null, code = null) {
     return new ApiError(409, message, details, code);
   }
 
-  static internal(message = 'Internal server error', code) {
+  static internal(message = 'Internal server error', code = null) {
     return new ApiError(500, message, null, code);
   }
 }

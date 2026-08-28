@@ -18,16 +18,28 @@ const createParty = asyncHandler(async (req, res) => {
     const created2 = await tx.party.create({ data: { ...data, ownerId: req.profile.id } });
 
     if (capabilityNames?.length) {
-      for (const name of capabilityNames) {
-        const capability = await tx.capability.upsert({ where: { name }, update: {}, create: { name } });
-        await tx.partyCapability.create({ data: { partyId: created2.id, capabilityId: capability.id } });
-      }
+      await Promise.all(
+        capabilityNames.map(async (name) => {
+          const capability = await tx.capability.upsert({
+            where: { name },
+            update: {},
+            create: { name },
+          });
+          await tx.partyCapability.create({
+            data: { partyId: created2.id, capabilityId: capability.id },
+          });
+        })
+      );
     }
 
     if (businessRoles?.length) {
-      for (const role of businessRoles) {
-        await tx.businessRole.create({ data: { profileId: req.profile.id, role, partyId: created2.id } });
-      }
+      await Promise.all(
+        businessRoles.map((role) =>
+          tx.businessRole.create({
+            data: { profileId: req.profile.id, role, partyId: created2.id },
+          })
+        )
+      );
     }
 
     return tx.party.findUnique({ where: { id: created2.id }, include: includeDefault });
@@ -47,13 +59,18 @@ const listMyParties = asyncHandler(async (req, res) => {
 
 /** Publik — dipakai frontend nampilin profil Party di halaman Opportunity/Marketplace. */
 const getParty = asyncHandler(async (req, res) => {
-  const party = await prisma.party.findUnique({ where: { id: req.params.id }, include: includeDefault });
+  const party = await prisma.party.findUnique({
+    where: { id: req.params.id },
+    include: includeDefault,
+  });
   if (!party) throw ApiError.notFound('Party not found');
   return success(res, party);
 });
 
 const updateParty = asyncHandler(async (req, res) => {
-  const existing = await prisma.party.findFirst({ where: { id: req.params.id, ownerId: req.profile.id } });
+  const existing = await prisma.party.findFirst({
+    where: { id: req.params.id, ownerId: req.profile.id },
+  });
   if (!existing) throw ApiError.forbidden('You do not own this party');
 
   const updated = await prisma.party.update({
@@ -66,20 +83,31 @@ const updateParty = asyncHandler(async (req, res) => {
 
 const addCapability = asyncHandler(async (req, res) => {
   const { name } = req.body;
-  const party = await prisma.party.findFirst({ where: { id: req.params.id, ownerId: req.profile.id } });
+  const party = await prisma.party.findFirst({
+    where: { id: req.params.id, ownerId: req.profile.id },
+  });
   if (!party) throw ApiError.forbidden('You do not own this party');
 
-  const capability = await prisma.capability.upsert({ where: { name }, update: {}, create: { name } });
+  const capability = await prisma.capability.upsert({
+    where: { name },
+    update: {},
+    create: { name },
+  });
   await prisma.partyCapability
     .create({ data: { partyId: party.id, capabilityId: capability.id } })
     .catch(() => null); // sudah ada -> abaikan diam-diam, idempotent
 
-  const updated = await prisma.party.findUnique({ where: { id: party.id }, include: includeDefault });
+  const updated = await prisma.party.findUnique({
+    where: { id: party.id },
+    include: includeDefault,
+  });
   return success(res, updated, 'Capability added');
 });
 
 const removeCapability = asyncHandler(async (req, res) => {
-  const party = await prisma.party.findFirst({ where: { id: req.params.id, ownerId: req.profile.id } });
+  const party = await prisma.party.findFirst({
+    where: { id: req.params.id, ownerId: req.profile.id },
+  });
   if (!party) throw ApiError.forbidden('You do not own this party');
 
   await prisma.partyCapability.deleteMany({
@@ -88,4 +116,11 @@ const removeCapability = asyncHandler(async (req, res) => {
   return success(res, null, 'Capability removed');
 });
 
-module.exports = { createParty, listMyParties, getParty, updateParty, addCapability, removeCapability };
+module.exports = {
+  createParty,
+  listMyParties,
+  getParty,
+  updateParty,
+  addCapability,
+  removeCapability,
+};

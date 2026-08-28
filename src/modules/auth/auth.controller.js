@@ -15,7 +15,7 @@ const asyncHandler = require('../../utils/asyncHandler');
  * This endpoint is idempotent: calling it again just returns the existing profile.
  */
 const register = asyncHandler(async (req, res) => {
-  const supabaseUser = req.supabaseUser; // set by a lightweight "verify token only" middleware
+  const { supabaseUser } = req; // set by a lightweight "verify token only" middleware
   const { fullName, phone, bio, location, party, businessRoles, capabilityNames } = req.body;
 
   const existing = await prisma.user.findUnique({
@@ -53,23 +53,29 @@ const register = asyncHandler(async (req, res) => {
       });
 
       if (capabilityNames?.length) {
-        for (const name of capabilityNames) {
-          const capability = await tx.capability.upsert({
-            where: { name },
-            update: {},
-            create: { name },
-          });
-          await tx.partyCapability.create({
-            data: { partyId: createdParty.id, capabilityId: capability.id },
-          });
-        }
+        await Promise.all(
+          capabilityNames.map(async (name) => {
+            const capability = await tx.capability.upsert({
+              where: { name },
+              update: {},
+              create: { name },
+            });
+            await tx.partyCapability.create({
+              data: { partyId: createdParty.id, capabilityId: capability.id },
+            });
+          })
+        );
       }
     }
 
-    for (const role of businessRoles) {
-      await tx.businessRole.create({
-        data: { profileId: profile.id, role, partyId: createdParty?.id },
-      });
+    if (businessRoles?.length) {
+      await Promise.all(
+        businessRoles.map((role) =>
+          tx.businessRole.create({
+            data: { profileId: profile.id, role, partyId: createdParty?.id },
+          })
+        )
+      );
     }
 
     return tx.profile.findUnique({

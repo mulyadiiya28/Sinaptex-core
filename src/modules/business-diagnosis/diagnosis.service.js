@@ -64,11 +64,99 @@ async function detectPattern(symptomId, rawText) {
   const patterns = await prisma.diagnosticPattern.findMany({ where: { symptomId } });
   const text = rawText.toLowerCase();
 
-  for (const pattern of patterns) {
-    const hit = pattern.keywords.some((kw) => text.includes(kw.toLowerCase()));
-    if (hit) return pattern;
+  return (
+    patterns.find((pattern) => pattern.keywords.some((kw) => text.includes(kw.toLowerCase()))) ||
+    null
+  );
+}
+
+// ---------- Step 3: evaluasi rule deterministik ----------
+
+async function evaluateAndUpdate(diagnosisId) {
+  const diagnosis = await prisma.businessDiagnosis.findUnique({
+    where: { id: diagnosisId },
+    include: { factorValues: { include: { factor: true } } },
+  });
+  if (!diagnosis) throw new Error('Diagnosis session not found');
+
+  const rules = await prisma.diagnosticRule.findMany({
+    where: { symptomId: diagnosis.symptomId },
+    orderBy: { priority: 'asc' },
+    include: { rootCause: true },
+  });
+
+  const valueMap = new Map(
+    diagnosis.factorValues.map((fv) => [
+      fv.factorId,
+      { raw: fv.value, source: fv.source, dataType: fv.factor.dataType },
+    ])
+  );
+
+  let matchedRule = null;
+  const missingFactorIds = new Set();
+
+  matchedRule = rules.find((rule) => {
+    const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
+    const missing = conditions.filter((c) => !valueMap.has(c.factorId));
+
+    if (missing.length > 0) {
+      missing.forEach((c) => missingFactorIds.add(c.factorId));
+      return false;
+    }
+
+    return conditions.every((c) => {
+      const entry = valueMap.get(c.factorId);
+      const actual = parseFactorValue(entry.raw, entry.dataType);
+      return evaluateCondition(c.operator, actual, c.value);
+    });
+  });
+
+  let update;
+  let pendingFactors = [];
+
+  if (matchedRule) {
+    const usedFactorIds = (Array.isArray(matchedRule.conditions) ? matchedRule.conditions : []).map(
+      (c) => c.factorId
+    );
+    const usedSources = usedFactorIds.map((id) => valueMap.get(id)?.source);
+    const allAuto = usedSources.length > 0 && usedSources.every((s) => s === 'AUTO_PLATFORM');
+    const allManual = usedSources.length > 0 && usedSources.every((s) => s === 'MANUAL_INPUT');
+    let confidenceScore = diagnosisConfig.confidenceByProvenance.mixed;
+
+    if (allAuto) confidenceScore = diagnosisConfig.confidenceByProvenance.allAuto;
+    else if (allManual) confidenceScore = diagnosisConfig.confidenceByProvenance.allManual;
+
+    update = {
+      diagnosedRootCauseId: matchedRule.rootCauseId,
+      confidenceScore,
+      status: 'DIAGNOSED',
+    };
+  } else if (missingFactorIds.size > 0) {
+    update = { status: 'DATA_COLLECTION' };
+    const factors = await prisma.diagnosticFactor.findMany({
+      where: { id: { in: [...missingFactorIds] } },
+    });
+    pendingFactors = factors.map((f) => ({
+      id: f.id,
+      name: f.name,
+      dataType: f.dataType,
+      sourceType: f.sourceType,
+      unit: f.unit,
+    }));
+  } else {
+    update = { status: 'INSUFFICIENT_DATA' };
+    logger.info('Business diagnosis: no rule matched, honest insufficient-data close', {
+      diagnosisId,
+    });
   }
-  return null;
+
+  const updated = await prisma.businessDiagnosis.update({
+    where: { id: diagnosisId },
+    data: update,
+    include: { diagnosedRootCause: true, symptom: true, matchedPattern: true },
+  });
+
+  return { diagnosis: updated, pendingFactors };
 }
 
 // ---------- Step 1: mulai sesi diagnosis ----------
@@ -83,25 +171,38 @@ async function startDiagnosis({ symptomId, partyId, profileId, rawText }) {
   const matchedPattern = await detectPattern(symptomId, rawText);
 
   const diagnosis = await prisma.businessDiagnosis.create({
-    data: { symptomId, partyId, profileId, status: 'DATA_COLLECTION', matchedPatternId: matchedPattern?.id },
+    data: {
+      symptomId,
+      partyId,
+      profileId,
+      status: 'DATA_COLLECTION',
+      matchedPatternId: matchedPattern?.id,
+    },
   });
 
-  // Coba tarik otomatis untuk factor yang sourceType=AUTO_PLATFORM (hybrid sourcing).
-  const autoResolved = [];
-  if (partyId) {
-    for (const factor of symptom.factors) {
-      if (factor.sourceType !== 'AUTO_PLATFORM') continue;
-      // eslint-disable-next-line no-await-in-loop
-      const value = await resolveAutoMetric(factor.autoSourceKey, partyId);
-      if (value === null || value === undefined) continue; // data platform belum cukup -> biarkan jadi manual
+  const autoResolved = partyId
+    ? (
+        await Promise.all(
+          symptom.factors
+            .filter((factor) => factor.sourceType === 'AUTO_PLATFORM')
+            .map(async (factor) => {
+              const value = await resolveAutoMetric(factor.autoSourceKey, partyId);
+              if (value === null || value === undefined) return null;
 
-      // eslint-disable-next-line no-await-in-loop
-      await prisma.businessDiagnosisFactorValue.create({
-        data: { diagnosisId: diagnosis.id, factorId: factor.id, value: String(value), source: 'AUTO_PLATFORM' },
-      });
-      autoResolved.push({ factorId: factor.id, name: factor.name, value, source: 'AUTO_PLATFORM' });
-    }
-  }
+              await prisma.businessDiagnosisFactorValue.create({
+                data: {
+                  diagnosisId: diagnosis.id,
+                  factorId: factor.id,
+                  value: String(value),
+                  source: 'AUTO_PLATFORM',
+                },
+              });
+
+              return { factorId: factor.id, name: factor.name, value, source: 'AUTO_PLATFORM' };
+            })
+        )
+      ).filter(Boolean)
+    : [];
 
   const result = await evaluateAndUpdate(diagnosis.id);
   return {
@@ -132,95 +233,6 @@ async function submitFactorValue({ diagnosisId, factorId, value }) {
   });
 
   return evaluateAndUpdate(diagnosisId);
-}
-
-// ---------- Step 3: evaluasi rule deterministik ----------
-
-async function evaluateAndUpdate(diagnosisId) {
-  const diagnosis = await prisma.businessDiagnosis.findUnique({
-    where: { id: diagnosisId },
-    include: { factorValues: { include: { factor: true } } },
-  });
-  if (!diagnosis) throw new Error('Diagnosis session not found');
-
-  const rules = await prisma.diagnosticRule.findMany({
-    where: { symptomId: diagnosis.symptomId },
-    orderBy: { priority: 'asc' },
-    include: { rootCause: true },
-  });
-
-  const valueMap = new Map(
-    diagnosis.factorValues.map((fv) => [
-      fv.factorId,
-      { raw: fv.value, source: fv.source, dataType: fv.factor.dataType },
-    ])
-  );
-
-  let matchedRule = null;
-  const missingFactorIds = new Set();
-
-  for (const rule of rules) {
-    const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
-    const missing = conditions.filter((c) => !valueMap.has(c.factorId));
-
-    if (missing.length > 0) {
-      missing.forEach((c) => missingFactorIds.add(c.factorId));
-      continue; // rule ini belum bisa dievaluasi, lanjut cek rule berikutnya dulu
-    }
-
-    const allMatch = conditions.every((c) => {
-      const entry = valueMap.get(c.factorId);
-      const actual = parseFactorValue(entry.raw, entry.dataType);
-      return evaluateCondition(c.operator, actual, c.value);
-    });
-
-    if (allMatch) {
-      matchedRule = rule;
-      break; // priority asc -> rule pertama yang match menang
-    }
-  }
-
-  let update;
-  let pendingFactors = [];
-
-  if (matchedRule) {
-    const usedFactorIds = (Array.isArray(matchedRule.conditions) ? matchedRule.conditions : []).map(
-      (c) => c.factorId
-    );
-    const usedSources = usedFactorIds.map((id) => valueMap.get(id)?.source);
-    const allAuto = usedSources.every((s) => s === 'AUTO_PLATFORM');
-    const allManual = usedSources.every((s) => s === 'MANUAL_INPUT');
-    const confidenceScore = allAuto
-      ? diagnosisConfig.confidenceByProvenance.allAuto
-      : allManual
-        ? diagnosisConfig.confidenceByProvenance.allManual
-        : diagnosisConfig.confidenceByProvenance.mixed;
-
-    update = { diagnosedRootCauseId: matchedRule.rootCauseId, confidenceScore, status: 'DIAGNOSED' };
-  } else if (missingFactorIds.size > 0) {
-    update = { status: 'DATA_COLLECTION' };
-    const factors = await prisma.diagnosticFactor.findMany({ where: { id: { in: [...missingFactorIds] } } });
-    pendingFactors = factors.map((f) => ({
-      id: f.id,
-      name: f.name,
-      dataType: f.dataType,
-      sourceType: f.sourceType,
-      unit: f.unit,
-    }));
-  } else {
-    // Semua rule sudah bisa dievaluasi penuh (atau tidak ada rule sama sekali)
-    // dan tidak ada yang match -> basis pengetahuan belum menjangkau kombinasi ini.
-    update = { status: 'INSUFFICIENT_DATA' };
-    logger.info('Business diagnosis: no rule matched, honest insufficient-data close', { diagnosisId });
-  }
-
-  const updated = await prisma.businessDiagnosis.update({
-    where: { id: diagnosisId },
-    data: update,
-    include: { diagnosedRootCause: true, symptom: true, matchedPattern: true },
-  });
-
-  return { diagnosis: updated, pendingFactors };
 }
 
 module.exports = {

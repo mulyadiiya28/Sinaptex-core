@@ -19,6 +19,14 @@ const env = require('../../config/env');
 
 const W = env.ranking; // weights, sum ~= 1.0 across match/reputation/response/completion/activity/verification/boost
 
+function clamp(n, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function round(n) {
+  return Math.round(n * 100) / 100;
+}
+
 function verificationStatusToScore(status) {
   return { VERIFIED: 100, PENDING: 40, REJECTED: 10, UNVERIFIED: 0 }[status] ?? 0;
 }
@@ -68,13 +76,6 @@ function computeFinalScore({
   const finalScore = round(Object.values(breakdown).reduce((a, b) => a + b, 0));
 
   return { finalScore: Math.max(0, finalScore), breakdown };
-}
-
-function clamp(n, min = 0, max = 100) {
-  return Math.min(max, Math.max(min, n));
-}
-function round(n) {
-  return Math.round(n * 100) / 100;
 }
 
 module.exports = { computeFinalScore, verificationStatusToScore };

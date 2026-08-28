@@ -36,24 +36,21 @@ async function findSolutionCategory(statedWant) {
     include: { jobMappings: { include: { job: { include: { clarifyingQuestions: true } } } } },
   });
 
-  let best = null;
-  let bestScore = 0;
+  return (
+    categories.reduce((best, category) => {
+      const nameTokens = tokenize(category.name);
+      const keywordTokens = new Set(category.keywords.flatMap((k) => [...tokenize(k)]));
+      const categoryTokens = new Set([...nameTokens, ...keywordTokens]);
 
-  for (const category of categories) {
-    const nameTokens = tokenize(category.name);
-    const keywordTokens = new Set(category.keywords.flatMap((k) => [...tokenize(k)]));
-    const categoryTokens = new Set([...nameTokens, ...keywordTokens]);
+      const overlap = [...wantTokens].filter((t) => categoryTokens.has(t)).length;
+      const score = overlap + jaccard(wantTokens, categoryTokens);
 
-    const overlap = [...wantTokens].filter((t) => categoryTokens.has(t)).length;
-    const score = overlap + jaccard(wantTokens, categoryTokens); // integer overlap + fractional similarity as tiebreaker
-
-    if (overlap >= decisionConfig.minKeywordOverlap && score > bestScore) {
-      best = category;
-      bestScore = score;
-    }
-  }
-
-  return best;
+      if (overlap >= decisionConfig.minKeywordOverlap && score > (best?.score ?? 0)) {
+        return { category, score };
+      }
+      return best;
+    }, null)?.category || null
+  );
 }
 
 // ---------- Step 2: mulai sesi diagnosis (Inquiry) ----------
@@ -64,6 +61,79 @@ async function findSolutionCategory(statedWant) {
  * basis pengetahuan, engine JUJUR mengaku belum punya data (CLOSED_NO_DATA)
  * daripada mengarang jawaban.
  */
+async function diagnose(inquiryId) {
+  const inquiry = await prisma.decisionInquiry.findUnique({
+    where: { id: inquiryId },
+    include: { answers: true },
+  });
+  if (!inquiry) throw new Error('Inquiry not found');
+  if (!inquiry.matchedSolutionCategoryId)
+    throw new Error('Inquiry has no matched SolutionCategory yet');
+
+  const category = await prisma.solutionCategory.findUnique({
+    where: { id: inquiry.matchedSolutionCategoryId },
+    include: { jobMappings: { include: { job: { include: { clarifyingQuestions: true } } } } },
+  });
+
+  const answeredQuestionIds = new Set(inquiry.answers.map((a) => a.questionId));
+
+  let bestJob = null;
+  let bestScore = -1;
+  let totalQuestions = 0;
+  let totalAnswered = 0;
+
+  category.jobMappings.forEach((mapping) => {
+    const questions = mapping.job.clarifyingQuestions;
+    totalQuestions += questions.length;
+    const answeredForThisJob = questions.filter((q) => answeredQuestionIds.has(q.id)).length;
+    totalAnswered += answeredForThisJob;
+
+    const ratio = questions.length > 0 ? answeredForThisJob / questions.length : 0;
+    const score = ratio * 0.8 + mapping.relevance * 0.2;
+
+    if (score > bestScore || (questions.length === 0 && bestJob === null)) {
+      bestScore = score;
+      bestJob = mapping.job;
+    }
+  });
+
+  let answerCoverage = 0;
+  if (totalQuestions > 0) answerCoverage = totalAnswered / totalQuestions;
+  else if (bestJob) answerCoverage = 1;
+
+  const dominance = category.jobMappings.length > 1 ? Math.max(0, Math.min(1, bestScore)) : 1;
+  const confidenceScore =
+    Math.round(Math.min(1, answerCoverage * 0.6 + dominance * 0.4) * 1000) / 1000;
+
+  let dataSufficiency = 'INSUFFICIENT';
+  if (confidenceScore >= decisionConfig.confidence.minSufficient) dataSufficiency = 'SUFFICIENT';
+  else if (confidenceScore >= decisionConfig.confidence.minPartial) dataSufficiency = 'PARTIAL';
+
+  const status = dataSufficiency === 'SUFFICIENT' ? 'DIAGNOSED' : 'OPEN';
+
+  const updated = await prisma.decisionInquiry.update({
+    where: { id: inquiryId },
+    data: {
+      diagnosedJobId: bestJob ? bestJob.id : null,
+      confidenceScore,
+      dataSufficiency,
+      status,
+    },
+    include: { diagnosedJob: true, matchedSolutionCategory: true },
+  });
+
+  const remainingQuestions =
+    status === 'DIAGNOSED'
+      ? []
+      : category.jobMappings.flatMap((m) =>
+          m.job.clarifyingQuestions
+            .filter((q) => !answeredQuestionIds.has(q.id))
+            .map((q) => ({ id: q.id, jobId: m.job.id, question: q.question }))
+        );
+
+  return { inquiry: updated, alert: null, pendingQuestions: remainingQuestions };
+}
+
 async function startInquiry({ statedWant, profileId }) {
   const category = await findSolutionCategory(statedWant);
 
@@ -128,7 +198,8 @@ async function startInquiry({ statedWant, profileId }) {
 async function submitAnswer({ inquiryId, questionId, answer }) {
   const inquiry = await prisma.decisionInquiry.findUnique({ where: { id: inquiryId } });
   if (!inquiry) throw new Error('Inquiry not found');
-  if (inquiry.status !== 'OPEN') throw new Error(`Inquiry is already ${inquiry.status}, cannot answer further`);
+  if (inquiry.status !== 'OPEN')
+    throw new Error(`Inquiry is already ${inquiry.status}, cannot answer further`);
 
   await prisma.decisionInquiryAnswer.upsert({
     where: { inquiryId_questionId: { inquiryId, questionId } },
@@ -146,77 +217,6 @@ async function submitAnswer({ inquiryId, questionId, answer }) {
  * bobot kedua dari `relevance` mapping. Ini deterministik, bisa diaudit —
  * bukan black-box.
  */
-async function diagnose(inquiryId) {
-  const inquiry = await prisma.decisionInquiry.findUnique({
-    where: { id: inquiryId },
-    include: { answers: true },
-  });
-  if (!inquiry) throw new Error('Inquiry not found');
-  if (!inquiry.matchedSolutionCategoryId) throw new Error('Inquiry has no matched SolutionCategory yet');
-
-  const category = await prisma.solutionCategory.findUnique({
-    where: { id: inquiry.matchedSolutionCategoryId },
-    include: { jobMappings: { include: { job: { include: { clarifyingQuestions: true } } } } },
-  });
-
-  const answeredQuestionIds = new Set(inquiry.answers.map((a) => a.questionId));
-
-  let bestJob = null;
-  let bestScore = -1;
-  let totalQuestions = 0;
-  let totalAnswered = 0;
-
-  for (const mapping of category.jobMappings) {
-    const questions = mapping.job.clarifyingQuestions;
-    totalQuestions += questions.length;
-    const answeredForThisJob = questions.filter((q) => answeredQuestionIds.has(q.id)).length;
-    totalAnswered += answeredForThisJob;
-
-    const ratio = questions.length > 0 ? answeredForThisJob / questions.length : 0;
-    // Weighted score: proportion of this job's questions answered, tie-broken by relevance.
-    const score = ratio * 0.8 + mapping.relevance * 0.2;
-
-    if (score > bestScore || (questions.length === 0 && bestJob === null)) {
-      bestScore = score;
-      bestJob = mapping.job;
-    }
-  }
-
-  // confidenceScore: campuran antara (a) seberapa besar porsi pertanyaan relevan
-  // yang sudah terjawab, dan (b) seberapa dominan Job terbaik dibanding kandidat lain.
-  const answerCoverage = totalQuestions > 0 ? totalAnswered / totalQuestions : bestJob ? 1 : 0;
-  const dominance = category.jobMappings.length > 1 ? Math.max(0, Math.min(1, bestScore)) : 1;
-  const confidenceScore = Math.round(Math.min(1, answerCoverage * 0.6 + dominance * 0.4) * 1000) / 1000;
-
-  let dataSufficiency = 'INSUFFICIENT';
-  if (confidenceScore >= decisionConfig.confidence.minSufficient) dataSufficiency = 'SUFFICIENT';
-  else if (confidenceScore >= decisionConfig.confidence.minPartial) dataSufficiency = 'PARTIAL';
-
-  const status = dataSufficiency === 'SUFFICIENT' ? 'DIAGNOSED' : 'OPEN';
-
-  const updated = await prisma.decisionInquiry.update({
-    where: { id: inquiryId },
-    data: {
-      diagnosedJobId: bestJob ? bestJob.id : null,
-      confidenceScore,
-      dataSufficiency,
-      status,
-    },
-    include: { diagnosedJob: true, matchedSolutionCategory: true },
-  });
-
-  const remainingQuestions =
-    status === 'DIAGNOSED'
-      ? []
-      : category.jobMappings.flatMap((m) =>
-          m.job.clarifyingQuestions
-            .filter((q) => !answeredQuestionIds.has(q.id))
-            .map((q) => ({ id: q.id, jobId: m.job.id, question: q.question }))
-        );
-
-  return { inquiry: updated, alert: null, pendingQuestions: remainingQuestions };
-}
-
 // ---------- Step 4: cari Opportunity NYATA yang menjawab Job terdiagnosis ----------
 
 /**
@@ -264,7 +264,10 @@ async function getRecommendations(inquiryId) {
 
   const scored = candidates
     .map((opp) => {
-      const relevance = textSimilarity(referenceText, `${opp.title} ${opp.description} ${opp.tags.join(' ')}`);
+      const relevance = textSimilarity(
+        referenceText,
+        `${opp.title} ${opp.description} ${opp.tags.join(' ')}`
+      );
       return { opp, relevance };
     })
     .filter((s) => s.relevance >= decisionConfig.minSolutionRelevance)
@@ -304,7 +307,10 @@ async function getRecommendations(inquiryId) {
     );
   }
 
-  await prisma.decisionInquiry.update({ where: { id: inquiryId }, data: { status: 'RECOMMENDED' } });
+  await prisma.decisionInquiry.update({
+    where: { id: inquiryId },
+    data: { status: 'RECOMMENDED' },
+  });
 
   return { inquiry, recommendations, alert: null };
 }
@@ -322,7 +328,10 @@ async function searchRelevantOpportunities(referenceText, limit = 3) {
   return candidates
     .map((opp) => ({
       opp,
-      relevance: textSimilarity(referenceText, `${opp.title} ${opp.description} ${opp.tags.join(' ')}`),
+      relevance: textSimilarity(
+        referenceText,
+        `${opp.title} ${opp.description} ${opp.tags.join(' ')}`
+      ),
     }))
     .filter((s) => s.relevance >= decisionConfig.minSolutionRelevance)
     .sort((a, b) => b.relevance - a.relevance)
@@ -357,14 +366,16 @@ async function decideForRootCause(diagnosisId) {
     };
   }
   if (diagnosis.status !== 'DIAGNOSED') {
-    throw new Error('Diagnosis belum selesai. Lengkapi data yang diminta dulu (lihat pendingFactors).');
+    throw new Error(
+      'Diagnosis belum selesai. Lengkapi data yang diminta dulu (lihat pendingFactors).'
+    );
   }
   if (diagnosis.recommendations.length > 0) {
     return { diagnosis, recommendations: diagnosis.recommendations, alert: null };
   }
 
   const rootCause = diagnosis.diagnosedRootCause;
-  const decision = rootCause.decision;
+  const { decision } = rootCause;
   if (!decision) {
     // Gap konfigurasi: root cause terdiagnosis tapi belum punya BusinessDecision terkait.
     const gap = await prisma.businessDiagnosisRecommendation.create({
@@ -389,6 +400,10 @@ async function decideForRootCause(diagnosisId) {
       orderBy: { updatedAt: 'desc' },
     });
 
+    const advisoryReason = advisory
+      ? `Akar masalah teridentifikasi: "${rootCause.name}" — ${rootCause.explanation}`
+      : `Akar masalah teridentifikasi: "${rootCause.name}". Namun saran untuk kasus ini belum melalui review admin, jadi belum bisa kami tampilkan sebagai rekomendasi resmi.`;
+
     recs.push(
       await prisma.businessDiagnosisRecommendation.create({
         data: {
@@ -397,16 +412,16 @@ async function decideForRootCause(diagnosisId) {
           advisoryContentId: advisory?.id ?? null,
           confidence: diagnosis.confidenceScore,
           isDataGapAlert: !advisory,
-          reasoning: advisory
-            ? `Akar masalah teridentifikasi: "${rootCause.name}" — ${rootCause.explanation}`
-            : `Akar masalah teridentifikasi: "${rootCause.name}". Namun saran untuk kasus ini belum ` +
-              'melalui review admin, jadi belum bisa kami tampilkan sebagai rekomendasi resmi.',
+          reasoning: advisoryReason,
         },
       })
     );
   }
 
-  if (decision.recommendationType === 'MATCH_OPPORTUNITY' || decision.recommendationType === 'HYBRID') {
+  if (
+    decision.recommendationType === 'MATCH_OPPORTUNITY' ||
+    decision.recommendationType === 'HYBRID'
+  ) {
     if (!decision.job) {
       recs.push(
         await prisma.businessDiagnosisRecommendation.create({
@@ -440,10 +455,9 @@ async function decideForRootCause(diagnosisId) {
           })
         );
       } else {
-        for (const { opp, relevance } of matches) {
-          recs.push(
-            // eslint-disable-next-line no-await-in-loop
-            await prisma.businessDiagnosisRecommendation.create({
+        const opportunityRecommendations = await Promise.all(
+          matches.map(async ({ opp, relevance }) =>
+            prisma.businessDiagnosisRecommendation.create({
               data: {
                 diagnosisId,
                 type: 'OPPORTUNITY_MATCH',
@@ -455,8 +469,9 @@ async function decideForRootCause(diagnosisId) {
                   `${opp.party.name} relevan untuk menjawabnya (kemiripan konten ${Math.round(relevance * 100)}%).`,
               },
             })
-          );
-        }
+          )
+        );
+        recs.push(...opportunityRecommendations);
       }
     }
   }

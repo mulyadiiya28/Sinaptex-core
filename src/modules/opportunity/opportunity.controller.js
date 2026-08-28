@@ -37,16 +37,18 @@ const createOpportunity = asyncHandler(async (req, res) => {
     const opp = await tx.opportunity.create({ data: { ...data, partyId } });
 
     if (capabilityNames?.length) {
-      for (const name of capabilityNames) {
-        const capability = await tx.capability.upsert({
-          where: { name },
-          update: {},
-          create: { name },
-        });
-        await tx.opportunityCapability.create({
-          data: { opportunityId: opp.id, capabilityId: capability.id },
-        });
-      }
+      await Promise.all(
+        capabilityNames.map(async (name) => {
+          const capability = await tx.capability.upsert({
+            where: { name },
+            update: {},
+            create: { name },
+          });
+          await tx.opportunityCapability.create({
+            data: { opportunityId: opp.id, capabilityId: capability.id },
+          });
+        })
+      );
     }
 
     return tx.opportunity.findUnique({ where: { id: opp.id }, include: includeDefault });
@@ -139,7 +141,10 @@ const uploadMedia = asyncHandler(async (req, res) => {
   if (opp.party.ownerId !== req.profile.id) throw ApiError.forbidden();
   if (!req.file) throw ApiError.badRequest('File is required (field name: "file")');
 
-  const uploaded = await uploadBuffer(req.file.buffer, { folder: 'opportunity-media', resourceType: 'image' });
+  const uploaded = await uploadBuffer(req.file.buffer, {
+    folder: 'opportunity-media',
+    resourceType: 'image',
+  });
 
   const media = await prisma.media.create({
     data: {

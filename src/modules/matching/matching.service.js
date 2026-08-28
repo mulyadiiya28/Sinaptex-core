@@ -20,9 +20,9 @@
  */
 
 const WEIGHTS = {
-  capabilityMatch: 0.30,
+  capabilityMatch: 0.3,
   location: 0.15,
-  budget: 0.20,
+  budget: 0.2,
   tags: 0.15,
   textSimilarity: 0.15,
   priority: 0.05,
@@ -109,6 +109,10 @@ function scorePriority(candidate) {
  * @param {object} candidate - Opportunity with capabilities included
  * @returns {{ score: number, breakdown: object }} score is 0..100
  */
+function round(n) {
+  return Math.round(n * 1000) / 1000;
+}
+
 function computeMatchScore(source, candidate) {
   const sourceCapIds = (source.capabilities || []).map((c) => c.capabilityId);
   const candidateCapIds = (candidate.capabilities || []).map((c) => c.capabilityId);
@@ -130,20 +134,22 @@ function computeMatchScore(source, candidate) {
   return { score: round(weightedSum * 100), breakdown };
 }
 
-function round(n) {
-  return Math.round(n * 1000) / 1000;
-}
-
 /**
  * Hard filter check between a source and a candidate Opportunity.
  */
-function passesHardFilter(source, candidate, { candidateVerified = false, sourceVerified = false } = {}) {
+function passesHardFilter(
+  source,
+  candidate,
+  { candidateVerified = false, sourceVerified = false } = {}
+) {
   if (source.type === candidate.type) return false; // must be opposite (NEED<->OFFER)
   if (candidate.status !== 'ACTIVE') return false;
-  if (source.categoryId && candidate.categoryId && source.categoryId !== candidate.categoryId) return false;
+  if (source.categoryId && candidate.categoryId && source.categoryId !== candidate.categoryId)
+    return false;
 
   if (candidate.visibility === 'PRIVATE') return false;
-  if (candidate.visibility === 'VERIFIED_ONLY' && !(candidateVerified && sourceVerified)) return false;
+  if (candidate.visibility === 'VERIFIED_ONLY' && !(candidateVerified && sourceVerified))
+    return false;
 
   return true;
 }

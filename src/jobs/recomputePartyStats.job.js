@@ -11,19 +11,21 @@ const { recomputePartyStats } = require('../modules/ranking/partyStats.service')
  */
 async function recomputeAllPartyStats() {
   const parties = await prisma.party.findMany({ select: { id: true } });
-  let success = 0;
-  let failed = 0;
 
-  for (const { id } of parties) {
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      await recomputePartyStats(id);
-      success += 1;
-    } catch (err) {
-      failed += 1;
-      logger.error(`Failed to recompute stats for party ${id}`, { error: err.message });
-    }
-  }
+  const results = await Promise.all(
+    parties.map(async ({ id }) => {
+      try {
+        await recomputePartyStats(id);
+        return { ok: true, id };
+      } catch (err) {
+        logger.error(`Failed to recompute stats for party ${id}`, { error: err.message });
+        return { ok: false, id };
+      }
+    })
+  );
+
+  const success = results.filter((r) => r.ok).length;
+  const failed = results.length - success;
 
   logger.info(`Recomputed party stats: ${success} ok, ${failed} failed, ${parties.length} total`);
   return { success, failed, total: parties.length };

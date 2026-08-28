@@ -56,37 +56,42 @@ const runMatching = asyncHandler(async (req, res) => {
 
   const sourceVerified = source.party.verificationStatus === 'VERIFIED';
 
-  const scored = [];
-  for (const candidate of filteredCandidates) {
-    const candidateVerified = candidate.party.verificationStatus === 'VERIFIED';
-    if (!passesHardFilter(source, candidate, { sourceVerified, candidateVerified })) continue;
+  const scored = await Promise.all(
+    filteredCandidates
+      .filter((candidate) => {
+        const candidateVerified = candidate.party.verificationStatus === 'VERIFIED';
+        return passesHardFilter(source, candidate, { sourceVerified, candidateVerified });
+      })
+      .map(async (candidate) => {
+        const { score: matchScore, breakdown: matchBreakdown } = computeMatchScore(
+          source,
+          candidate
+        );
 
-    const { score: matchScore, breakdown: matchBreakdown } = computeMatchScore(source, candidate);
+        const stats = (await recomputePartyStats(candidate.partyId)) || {
+          reputationScore: 0,
+          responseScore: 0,
+          completionScore: 0,
+          activityScore: 0,
+          cancelCount: 0,
+          expiredCount: 0,
+        };
 
-    // eslint-disable-next-line no-await-in-loop
-    const stats = (await recomputePartyStats(candidate.partyId)) || {
-      reputationScore: 0,
-      responseScore: 0,
-      completionScore: 0,
-      activityScore: 0,
-      cancelCount: 0,
-      expiredCount: 0,
-    };
+        const boostPriorityWeight = candidate.boost?.priorityWeight
+          ? Math.min(100, candidate.boost.priorityWeight)
+          : 0;
 
-    const boostPriorityWeight = candidate.boost?.priorityWeight
-      ? Math.min(100, candidate.boost.priorityWeight)
-      : 0;
+        const { finalScore, breakdown: rankingBreakdown } = computeFinalScore({
+          matchScore,
+          party: { ...candidate.party, ...stats },
+          boostPriorityWeight,
+          cancelCount: stats.cancelCount,
+          expiredCount: stats.expiredCount,
+        });
 
-    const { finalScore, breakdown: rankingBreakdown } = computeFinalScore({
-      matchScore,
-      party: { ...candidate.party, ...stats },
-      boostPriorityWeight,
-      cancelCount: stats.cancelCount,
-      expiredCount: stats.expiredCount,
-    });
-
-    scored.push({ candidate, matchScore, matchBreakdown, finalScore, rankingBreakdown });
-  }
+        return { candidate, matchScore, matchBreakdown, finalScore, rankingBreakdown };
+      })
+  );
 
   scored.sort((a, b) => b.finalScore - a.finalScore);
   const top = scored.slice(0, req.query.limit);

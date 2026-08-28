@@ -47,7 +47,7 @@ async function canStartConversation({ initiatorProfileId, recipientProfileId, or
 }
 
 /** Placeholder untuk aturan reply di masa depan (mis. block user, conversation di-archive, dst). */
-function canReplyConversation(_conversation, _profileId) {
+function canReplyConversation() {
   return { allowed: true, reason: null, code: null };
 }
 
@@ -61,8 +61,12 @@ function canViewConversation(participantIds, profileId) {
 }
 
 /** Placeholder — belum ada fitur hapus conversation di MVP, disiapkan strukturnya saja. */
-function canDeleteConversation(_conversation, _profileId) {
-  return { allowed: false, reason: 'Menghapus percakapan belum didukung di MVP ini', code: ErrorCodes.FORBIDDEN };
+function canDeleteConversation() {
+  return {
+    allowed: false,
+    reason: 'Menghapus percakapan belum didukung di MVP ini',
+    code: ErrorCodes.FORBIDDEN,
+  };
 }
 
 async function assertCanStartConversation(params) {

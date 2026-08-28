@@ -17,27 +17,33 @@ async function fraudScan() {
     include: { invitation: { include: { fromParty: true, toParty: true } } },
   });
 
-  // De-dupe by party pair — no need to re-run the same pair check multiple times per scan
-  const seenPairs = new Set();
-  let flagged = 0;
+  const uniquePairs = [
+    ...new Map(
+      recentDeals.map((deal) => {
+        const { fromParty, toParty } = deal.invitation;
+        const pairKey = [fromParty.id, toParty.id].sort().join(':');
+        return [pairKey, { deal, fromParty, toParty }];
+      })
+    ).values(),
+  ];
 
-  for (const deal of recentDeals) {
-    const { fromParty, toParty } = deal.invitation;
-    const pairKey = [fromParty.id, toParty.id].sort().join(':');
-    if (seenPairs.has(pairKey)) continue;
-    seenPairs.add(pairKey);
+  const flagged = (
+    await Promise.all(
+      uniquePairs.map(async ({ deal, fromParty, toParty }) => {
+        const result = await runFraudChecks({
+          partyA: fromParty,
+          partyB: toParty,
+          dealId: deal.id,
+          invitationId: deal.invitationId,
+        });
+        return result.findings.length > 0 ? 1 : 0;
+      })
+    )
+  ).reduce((sum, value) => sum + value, 0);
 
-    // eslint-disable-next-line no-await-in-loop
-    const result = await runFraudChecks({
-      partyA: fromParty,
-      partyB: toParty,
-      dealId: deal.id,
-      invitationId: deal.invitationId,
-    });
-    if (result.findings.length > 0) flagged += 1;
-  }
-
-  logger.info(`Fraud scan complete: ${recentDeals.length} deal(s) checked, ${flagged} pair(s) flagged`);
+  logger.info(
+    `Fraud scan complete: ${recentDeals.length} deal(s) checked, ${flagged} pair(s) flagged`
+  );
   return { checked: recentDeals.length, flagged };
 }
 

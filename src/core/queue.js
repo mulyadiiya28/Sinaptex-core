@@ -3,8 +3,6 @@ const redisConfig = require('../config/redis.config');
 const queueConfig = require('../config/queue.config');
 const logger = require('./logger');
 
-const connection = { connection: { ...redisConfig.options, ...parseRedisUrl(redisConfig.url) } };
-
 function parseRedisUrl(url) {
   try {
     const u = new URL(url);
@@ -17,6 +15,8 @@ function parseRedisUrl(url) {
     return {};
   }
 }
+
+const connection = { connection: { ...redisConfig.options, ...parseRedisUrl(redisConfig.url) } };
 
 const queues = {};
 

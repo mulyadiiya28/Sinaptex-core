@@ -46,7 +46,11 @@ function classifyPattern(rawText) {
   // Rule 1: pertanyaan/interogatif -> selalu NEEDS_DIAGNOSIS
   const interrogative = findFirstMatch(text, intentConfig.interrogativePatterns);
   if (interrogative) {
-    return { category: 'NEEDS_DIAGNOSIS', subtype: 'ADVISORY_OR_ANALYSIS', matchedPattern: interrogative };
+    return {
+      category: 'NEEDS_DIAGNOSIS',
+      subtype: 'ADVISORY_OR_ANALYSIS',
+      matchedPattern: interrogative,
+    };
   }
 
   // Rule 2: gejala/tren negatif -> NEEDS_DIAGNOSIS
@@ -110,7 +114,14 @@ async function searchOpportunitiesDirect(rawText) {
       OR: [
         { title: { contains: rawText, mode: 'insensitive' } },
         { description: { contains: rawText, mode: 'insensitive' } },
-        { tags: { hasSome: rawText.toLowerCase().split(/\s+/).filter((w) => w.length > 2) } },
+        {
+          tags: {
+            hasSome: rawText
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w) => w.length > 2),
+          },
+        },
       ],
     },
     include: { party: { select: { id: true, name: true, verificationStatus: true } } },
@@ -123,16 +134,18 @@ async function searchOpportunitiesDirect(rawText) {
 /** Cocokkan rawText ke BusinessSymptom lewat text similarity — deterministik, bukan tebakan. */
 async function matchBusinessSymptom(rawText) {
   const symptoms = await prisma.businessSymptom.findMany();
-  let best = null;
-  let bestScore = 0;
-  for (const symptom of symptoms) {
-    const score = textSimilarity(rawText, `${symptom.name} ${symptom.description || ''}`);
-    if (score > bestScore) {
-      best = symptom;
-      bestScore = score;
-    }
-  }
-  return bestScore >= intentConfig.symptomMatchThreshold ? best : null;
+  const bestMatch = symptoms.reduce(
+    (best, symptom) => {
+      const score = textSimilarity(rawText, `${symptom.name} ${symptom.description || ''}`);
+      if (score > best.score) {
+        return { symptom, score };
+      }
+      return best;
+    },
+    { symptom: null, score: 0 }
+  );
+
+  return bestMatch.score >= intentConfig.symptomMatchThreshold ? bestMatch.symptom : null;
 }
 
 /**
@@ -176,7 +189,9 @@ async function handleIntent({ rawText, profileId, partyId }) {
       } else {
         // JUJUR: terdeteksi ini masalah bisnis, tapi tidak yakin gejala spesifiknya.
         // Jangan menebak salah satu symptom secara paksa.
-        const availableSymptoms = await prisma.businessSymptom.findMany({ select: { id: true, name: true } });
+        const availableSymptoms = await prisma.businessSymptom.findMany({
+          select: { id: true, name: true },
+        });
         payload = {
           engine: 'business-diagnosis',
           alert:

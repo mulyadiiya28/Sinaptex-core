@@ -25,7 +25,11 @@ const startDiagnosis = asyncHandler(async (req, res) => {
   }
 
   try {
-    const result = await diagnosisService.startDiagnosis({ symptomId, partyId, profileId: req.profile.id });
+    const result = await diagnosisService.startDiagnosis({
+      symptomId,
+      partyId,
+      profileId: req.profile.id,
+    });
     return created(res, result, 'Diagnosis session started');
   } catch (err) {
     throw ApiError.badRequest(err.message);
@@ -48,7 +52,11 @@ const getDiagnosis = asyncHandler(async (req, res) => {
 const submitFactor = asyncHandler(async (req, res) => {
   const { factorId, value } = req.body;
   try {
-    const result = await diagnosisService.submitFactorValue({ diagnosisId: req.params.id, factorId, value });
+    const result = await diagnosisService.submitFactorValue({
+      diagnosisId: req.params.id,
+      factorId,
+      value,
+    });
     return success(res, result, 'Factor value recorded');
   } catch (err) {
     throw ApiError.conflict(err.message);
@@ -76,62 +84,70 @@ const createKnowledge = asyncHandler(async (req, res) => {
       create: symptom,
     });
 
-    const factorIdByName = {};
-    for (const f of factors) {
-      const createdFactor = await tx.diagnosticFactor.create({
-        data: {
-          symptomId: createdSymptom.id,
-          name: f.name,
-          dataType: f.dataType,
-          sourceType: f.sourceType,
-          autoSourceKey: f.autoSourceKey,
-          unit: f.unit,
-          order: f.order ?? 0,
-        },
-      });
-      factorIdByName[f.name] = createdFactor.id;
-    }
+    const factorIdByName = Object.fromEntries(
+      await Promise.all(
+        (factors || []).map(async (f) => {
+          const createdFactor = await tx.diagnosticFactor.create({
+            data: {
+              symptomId: createdSymptom.id,
+              name: f.name,
+              dataType: f.dataType,
+              sourceType: f.sourceType,
+              autoSourceKey: f.autoSourceKey,
+              unit: f.unit,
+              order: f.order ?? 0,
+            },
+          });
+          return [f.name, createdFactor.id];
+        })
+      )
+    );
 
-    const createdRootCauses = [];
-    for (const rc of rootCauses) {
-      const rootCause = await tx.businessRootCause.create({
-        data: {
-          symptomId: createdSymptom.id,
-          name: rc.name,
-          explanation: rc.explanation,
-          recommendationType: rc.recommendationType,
-          jobId: rc.jobId,
-        },
-      });
-
-      for (const rule of rc.rules || []) {
-        await tx.diagnosticRule.create({
+    await Promise.all(
+      (rootCauses || []).map(async (rc) => {
+        const rootCause = await tx.businessRootCause.create({
           data: {
             symptomId: createdSymptom.id,
-            rootCauseId: rootCause.id,
-            priority: rule.priority ?? 0,
-            conditions: rule.conditions.map((c) => ({
-              ...c,
-              factorId: factorIdByName[c.factorName] || c.factorId,
-            })),
+            name: rc.name,
+            explanation: rc.explanation,
+            recommendationType: rc.recommendationType,
+            jobId: rc.jobId,
           },
         });
-      }
 
-      for (const advisory of rc.advisoryContents || []) {
-        await tx.advisoryContent.create({
-          data: {
-            rootCauseId: rootCause.id,
-            title: advisory.title,
-            body: advisory.body,
-            authorType: advisory.authorType || 'ADMIN',
-            status: 'DRAFT', // WAJIB direview lewat endpoint publish, tidak boleh langsung PUBLISHED
-          },
-        });
-      }
+        await Promise.all(
+          (rc.rules || []).map(async (rule) =>
+            tx.diagnosticRule.create({
+              data: {
+                symptomId: createdSymptom.id,
+                rootCauseId: rootCause.id,
+                priority: rule.priority ?? 0,
+                conditions: (rule.conditions || []).map((c) => ({
+                  ...c,
+                  factorId: factorIdByName[c.factorName] || c.factorId,
+                })),
+              },
+            })
+          )
+        );
 
-      createdRootCauses.push(rootCause);
-    }
+        await Promise.all(
+          (rc.advisoryContents || []).map(async (advisory) =>
+            tx.advisoryContent.create({
+              data: {
+                rootCauseId: rootCause.id,
+                title: advisory.title,
+                body: advisory.body,
+                authorType: advisory.authorType || 'ADMIN',
+                status: 'DRAFT',
+              },
+            })
+          )
+        );
+
+        return rootCause;
+      })
+    );
 
     return tx.businessSymptom.findUnique({
       where: { id: createdSymptom.id },

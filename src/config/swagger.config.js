@@ -9,7 +9,16 @@ module.exports = {
       description:
         'Auth → Verification → Opportunity → Boost → Matching → Ranking → Invitation → Deal',
     },
-    servers: [{ url: `http://localhost:${env.port}/api/v1`, description: 'Local' }],
+    servers: [
+      { 
+        url: 'https://cahayaastera.com', 
+        description: 'Production' 
+      },
+      { 
+        url: `http://localhost:${env.port}/api/v1`, 
+        description: 'Local' 
+      }
+    ],
     components: {
       securitySchemes: {
         bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'Supabase JWT' },
@@ -22,3 +31,4 @@ module.exports = {
   apis: ['./src/modules/**/*.routes.js'],
   uiPath: '/api/docs',
 };
+

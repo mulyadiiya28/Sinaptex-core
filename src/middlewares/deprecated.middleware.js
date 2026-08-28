@@ -1,37 +1,40 @@
-
 /**
- * Menandai sebuah endpoint sebagai deprecated tanpa memblokir request.
+ * Middleware untuk menandai endpoint sebagai deprecated.
  *
- * Endpoint tetap berfungsi normal selama masa migrasi bertahap.
+ * Endpoint tetap berfungsi normal dan request tetap diteruskan.
  *
- * Response headers:
- * - Deprecation: menandai endpoint sebagai deprecated
+ * Headers:
+ * - Deprecation: menandai endpoint deprecated
  * - Link: menunjuk ke endpoint pengganti
- * - X-Deprecation-Notice: pesan migrasi kustom
  *
  * Lihat docs/PROJECT_CHECKLIST.md — Phase 21.
  */
 
-const toSafeHeaderValue = (value = "") =>
-  String(value)
-    .normalize("NFKD")
-    .replace(/[^\x20-\x7E]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+const deprecated = (message, replacementPath) => {
+  return (req, res, next) => {
+    // Tandai endpoint sebagai deprecated
+    res.set('Deprecation', 'true');
 
-const deprecated = (message, replacementPath) => (req, res, next) => {
-  res.set("Deprecation", "true");
+    // Berikan endpoint pengganti jika tersedia
+    if (replacementPath) {
+      res.set(
+        'Link',
+        `<${replacementPath}>; rel="successor-version"`
+      );
+    }
 
-  if (replacementPath) {
-    res.set("Link", `<${replacementPath}>; rel="successor-version"`);
-  }
+    // Jangan masukkan message ke HTTP header.
+    // Pesan dapat mengandung karakter yang tidak valid
+    // untuk HTTP header dan menyebabkan ERR_INVALID_CHAR.
 
-  const safeMessage = toSafeHeaderValue(message);
-  if (safeMessage) {
-    res.set("X-Deprecation-Notice", safeMessage);
-  }
-
-  next();
+    next();
+  };
 };
 
+// CommonJS default export
 module.exports = deprecated;
+
+// Kompatibilitas dengan:
+// const { deprecated } = require(...)
+module.exports.deprecated = deprecated;
+

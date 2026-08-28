@@ -22,7 +22,11 @@ const deprecated = (message, replacementPath) => (req, res, next) => {
   }
 
   if (message) {
-    res.set('X-Deprecation-Notice', message);
+    const safeMessage = String(message)
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
+
+    res.set('X-Deprecation-Notice', safeMessage);
   }
 
   next();

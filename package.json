@@ -1,7 +1,7 @@
 {
-  "name": "business-matching-bridge",
+  "name": "sinaptex",
   "version": "1.0.0",
-  "description": "Business Matching Bridge Engine - Express + Prisma + Zod + Cloudinary + Supabase",
+  "description": "Sinaptex API — Express + Prisma + Zod + Cloudinary + Supabase",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {

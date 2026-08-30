@@ -14,7 +14,7 @@ module.exports = async function healthCheck(req, res) {
 
   res.status(healthy ? 200 : 503).json({
     success: healthy,
-    message: healthy ? 'Business Matching Bridge API is up' : 'Degraded',
+    message: healthy ? 'Sinaptex API is up' : 'Degraded',
     checks,
     timestamp: new Date().toISOString(),
   });

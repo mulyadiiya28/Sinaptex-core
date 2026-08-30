@@ -5,7 +5,7 @@ const { initSocket } = require('./core/socket');
 
 const server = app.listen(env.port, () => {
   // eslint-disable-next-line no-console
-  console.log(`🚀 Business Matching Bridge API running on port ${env.port} [${env.nodeEnv}]`);
+  console.log(`🚀 Sinaptex API running on port ${env.port} [${env.nodeEnv}]`);
   // eslint-disable-next-line no-console
   console.log(`💬 Chat WebSocket ready on the same port (Socket.IO)`);
 });

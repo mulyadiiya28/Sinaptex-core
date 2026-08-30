@@ -1,6 +1,6 @@
-# Business Matching Bridge — Engine
+# Sinaptex — API Engine
 
-Backend engine untuk platform *business matching*.
+Backend engine untuk platform *business matching* **Sinaptex**.
 
 Stack: **Node.js + Express**, **Prisma ORM**, **Zod**, **Cloudinary**, **Supabase** (Postgres + Auth),
 **Socket.IO** (chat), **node-cron** / CLI jobs (scheduler).

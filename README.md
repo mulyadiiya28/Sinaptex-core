@@ -8,7 +8,7 @@ Stack: **Node.js + Express**, **Prisma ORM**, **Zod**, **Cloudinary**, **Supabas
 ## Alur utama (revisi produk)
 
 ```
-Register/Login → Verification → Opportunity (Need gratis / Offer + membership)
+Register/Login → Verification → Opportunity (Need / Offer)
   → Boost → Matching → Ranking → User pilih hasil
        ├─ Chat cepat dari Opportunity (tanpa wajib Invitation)     ← FR-16, policy kode belum final
        └─ Invitation formal → Accept → Deal → … → Completed
@@ -18,7 +18,7 @@ Register/Login → Verification → Opportunity (Need gratis / Offer + membershi
 Chat dari Opportunity dirancang paralel (lihat `docs/product-decisions-offer-chat.md`).
 
 Dokumen produk / FR:
-- `docs/product-decisions-offer-chat.md` — keputusan Offer, membership, chat
+- `docs/product-decisions-offer-chat.md` — keputusan Need, Offer, membership, chat
 - `docs/functional-requirement.md` — FR-15 / FR-16 / FR-17
 - `docs/flowchart.md`, `docs/state-machines.md`
 - `docs/deployment-guide.md` — deploy + **cron Hostinger**
@@ -30,9 +30,10 @@ Dokumen produk / FR:
 | Area | Status |
 |------|--------|
 | Auth, verification, matching, ranking, invitation, deal | ✅ |
-| Offer wajib membership aktif | ✅ |
-| Kuota max **20** Offer ACTIVE / profile | ✅ |
-| Membership expire → sisa **1** Offer, sisanya CLOSED | ✅ (job `expireMemberships`) |
+| Opportunity: Need & Offer untuk non-member | 🔄 aturan produk baru |
+| Non-member: max **1 ACTIVE Need + 1 ACTIVE Offer** | 🔄 aturan produk baru |
+| Member aktif: max **20 ACTIVE Need + 20 ACTIVE Offer** | 🔄 aturan produk baru |
+| Membership expire → sisa **1 posting terakhir** untuk masing-masing tipe | 🔄 aturan produk baru |
 | CLI job untuk shared hosting (`run-once.js`) | ✅ |
 | Chat dari Opportunity **tanpa** membership + rate limit (FR-16) | ⬜ **belum** — policy lama masih di kode |
 | Invitation bukan syarat chat | ⬜ docs ✅, UX/policy kode ⬜ |
@@ -48,12 +49,12 @@ src/config/                  # env, prisma, cloudinary, supabase, scheduler.conf
 src/jobs/
   scheduler.js               # process panjang (VPS/Docker)
   run-once.js                # one-shot untuk Cron Hostinger
-  expireMemberships.job.js   # + trim Offer (FR-15)
+  expireMemberships.job.js   # membership expire + trim posting
   expireOpportunities.job.js
   …
 src/modules/
   auth/  profile/  verification/
-  opportunity/   # Need gratis; Offer: membership + kuota
+  opportunity/   # Need & Offer + quota berdasarkan status membership
   boost/  matching/  ranking/
   invitation/    # jalur formal → Deal
   chat/          # policy: src/modules/chat/chat.policy.js (revisi FR-16 menyusul)
@@ -104,7 +105,7 @@ Aktifkan di Supabase (Authentication → Providers → Google). Backend hanya ve
 
 ```bash
 npm run jobs:frequent   # expire opportunity + invitation
-npm run jobs:daily      # membership (+ trim Offer), stats, cleanup, fraud
+npm run jobs:daily      # membership + trim posting, stats, cleanup, fraud
 npm run jobs:once -- expireMemberships
 ```
 
@@ -132,15 +133,36 @@ Diblokir otomatis jika `NODE_ENV=production`.
 
 ## 3. Opportunity (Need / Offer)
 
-| Tipe | Aturan |
-|------|--------|
-| **NEED** | Gratis, tanpa membership |
-| **OFFER** | Membership **ACTIVE** wajib; max **20** Offer `ACTIVE` per Profile |
-| Membership **EXPIRED** | Job menyisakan **1** Offer terbaru `ACTIVE`, sisanya `CLOSED` |
+Aturan produk saat ini:
 
-Error terkait: `MEMBERSHIP_REQUIRED`, `OFFER_QUOTA_EXCEEDED`.
+| Status akun | NEED | OFFER |
+|------|------:|------:|
+| **Non-member** | Maks. **1 ACTIVE** | Maks. **1 ACTIVE** |
+| **Member aktif** | Maks. **20 ACTIVE** | Maks. **20 ACTIVE** |
+| **Membership expired / tidak aktif** | Pertahankan **1 posting terakhir** | Pertahankan **1 posting terakhir** |
 
-Konstanta: `src/shared/constants.js` (`MAX_ACTIVE_OFFERS`, `OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE`).
+### Aturan penting
+
+1. **Need dan Offer sama-sama boleh dibuat oleh non-member.** Membership tidak lagi menjadi syarat untuk membuat Offer.
+2. Non-member dibatasi maksimal **1 Need ACTIVE + 1 Offer ACTIVE**.
+3. Member aktif dibatasi maksimal **20 Need ACTIVE + 20 Offer ACTIVE**.
+4. Quota dihitung berdasarkan posting berstatus `ACTIVE`, bukan jumlah seluruh history posting.
+5. Ketika membership berakhir, sistem melakukan trim dan hanya mempertahankan **1 posting terakhir untuk Need dan 1 posting terakhir untuk Offer**. Posting lain ditutup (`CLOSED`) dan tidak boleh tetap aktif.
+6. Posting `CLOSED`, `EXPIRED`, atau `CANCELLED` tidak dihitung sebagai quota ACTIVE.
+7. Need dan Offer dari pemilik/party yang sama **tidak boleh menghasilkan self-match**.
+8. User yang memiliki Need dan Offer secara bersamaan **tetap diperbolehkan** selama masing-masing quota terpenuhi.
+
+Error quota:
+- `OPPORTUNITY_QUOTA_EXCEEDED`
+
+Konstanta yang direkomendasikan di `src/shared/constants.js`:
+- `MAX_ACTIVE_FREE_NEEDS = 1`
+- `MAX_ACTIVE_FREE_OFFERS = 1`
+- `MAX_ACTIVE_MEMBER_NEEDS = 20`
+- `MAX_ACTIVE_MEMBER_OFFERS = 20`
+- `POSTINGS_KEPT_AFTER_MEMBERSHIP_EXPIRE = 1`
+
+> Catatan implementasi: README ini mendokumentasikan **aturan produk baru**. Kode opportunity dan job membership harus diaudit agar implementasinya benar-benar sama dengan aturan ini.
 
 ---
 
@@ -198,7 +220,7 @@ GET  /api/auth/me         (Bearer)
 
 ## 7. Matching & Ranking
 
-Hard filter: tipe berlawanan, `ACTIVE`, kategori, visibility.
+Hard filter: tipe berlawanan, `ACTIVE`, kategori, visibility, dan **bukan self-match**.
 
 Scoring match (0–100): capability, location, budget, tags, text, priority.
 
@@ -229,6 +251,9 @@ Sebelum `COMPLETED`: fraud checks dapat memblokir.
 
 ## 10. Yang belum / next
 
+- [ ] Audit & implementasi quota baru: **1 Need + 1 Offer non-member; 20 Need + 20 Offer member**
+- [ ] Audit & implementasi membership expiry: **sisa 1 posting terakhir untuk Need dan Offer**
+- [ ] **Self-match prevention** pada matching engine
 - [ ] **FR-16** — longgarkan `chat.policy.js` + rate limit anti-spam
 - [ ] Selaraskan FAQ seed yang masih menyebut chat butuh membership penerima
 - [ ] Payment gateway penuh untuk boost (selain membership Midtrans)

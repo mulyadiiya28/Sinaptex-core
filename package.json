@@ -23,7 +23,10 @@
     "db:restore": "bash prisma/scripts/restore.sh",
     "worker:party-stats": "node src/queue/partyStats.worker.js",
     "worker:notification": "node src/queue/notification.worker.js",
-    "scheduler": "node src/jobs/scheduler.js"
+    "scheduler": "node src/jobs/scheduler.js",
+    "jobs:once": "node src/jobs/run-once.js",
+    "jobs:frequent": "node src/jobs/run-once.js --group=frequent",
+    "jobs:daily": "node src/jobs/run-once.js --group=daily"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",

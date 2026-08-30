@@ -1,24 +1,23 @@
 # Keputusan produk — Offer, Membership, Chat (2026-08-30)
 
-Dokumen ini adalah **sumber kebenaran** untuk revisi yang belum di kode.
-Detail FR ada di `functional-requirement.md` (FR-15, FR-16, FR-17).
+Dokumen ini adalah **sumber kebenaran** untuk revisi produk Offer/Membership/Chat.
+Detail FR: `functional-requirement.md` (FR-15, FR-16, FR-17).
 State machine: `state-machines.md`. Alur: `flowchart.md`.
 
 ## 1. Offer + membership
 
-| Aturan | Keputusan |
-|--------|-----------|
-| Buat Offer | Wajib membership **ACTIVE** (tetap) |
-| Buat Need | Gratis, tanpa membership (tetap) |
-| Kuota Offer ACTIVE | **Max 20** per Profile (lintas semua Party milik profile) |
-| Membership EXPIRED | Offer ACTIVE → keep **1 terbaru** (`createdAt` desc), sisanya **CLOSED** |
-| Manfaat membership | Kuota Offer, prioritas matching/badge, limit chat longgar — **bukan** kunci mutlak chat Opportunity |
+| Aturan | Keputusan | Kode |
+|--------|-----------|------|
+| Buat Offer | Wajib membership **ACTIVE** | ✅ `createOpportunity` |
+| Buat Need | Gratis, tanpa membership | ✅ |
+| Kuota Offer ACTIVE | **Max 20** per Profile (lintas Party) | ✅ `MAX_ACTIVE_OFFERS` + `assertOfferQuota` |
+| Re-aktifkan Offer (PATCH status ACTIVE) | Membership + kuota | ✅ `updateOpportunity` |
+| Membership EXPIRED | Keep **1** Offer terbaru ACTIVE, sisanya **CLOSED** | ✅ `expireMemberships.job.js` |
+| Error kuota | `OFFER_QUOTA_EXCEEDED` (403) | ✅ `errorCodes.js` |
 
-**Kode yang harus diubah nanti:**
-- `src/modules/opportunity/opportunity.controller.js` — enforce kuota 20
-- `src/jobs/expireMemberships.job.js` — side-effect trim Offer
+Konstanta: `src/shared/constants.js` → `MAX_ACTIVE_OFFERS`, `OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE`.
 
-## 2. Chat (revisi policy)
+## 2. Chat (revisi policy) — belum di kode
 
 | originType | Aturan baru |
 |------------|-------------|
@@ -34,7 +33,7 @@ State machine: `state-machines.md`. Alur: `flowchart.md`.
 
 **Kode yang harus diubah nanti:**
 - `src/modules/chat/chat.policy.js`
-- Rate limit helper (baru) + enforce di `chat.service` / controller
+- Rate limit helper + enforce di chat service/controller
 
 ## 3. Invitation vs Chat
 
@@ -47,10 +46,11 @@ State machine: `state-machines.md`. Alur: `flowchart.md`.
 | Item | Docs | Kode |
 |------|------|------|
 | Offer butuh membership | ✅ | ✅ |
-| Kuota 20 Offer | ✅ FR-15 | ⬜ |
-| Trim Offer saat expire | ✅ FR-15 / state-machines | ⬜ |
-| Chat Opportunity tanpa membership | ✅ FR-16 | ⬜ (masih gate membership di OFFER/PROFILE) |
+| Kuota 20 Offer | ✅ FR-15 | ✅ |
+| Trim Offer saat expire | ✅ FR-15 | ✅ |
+| Chat Opportunity tanpa membership | ✅ FR-16 | ⬜ |
 | Rate limit chat | ✅ FR-16 | ⬜ |
-| Invitation bukan syarat chat | ✅ FR-17 / flowchart | ⬜ (UX + policy) |
+| Invitation bukan syarat chat | ✅ FR-17 | ⬜ (UX + policy) |
 
-Setelah kode selesai, centang kolom Kode dan selaraskan FAQ seed (`prisma/seed.js`) yang masih menyebut chat butuh membership penerima.
+Pastikan proses **scheduler** (`npm run scheduler`) jalan di production agar
+`expireMemberships` + trim Offer dieksekusi harian.

@@ -10,11 +10,20 @@ dijadikan rujukan saat implementasi/testing transisi status.
 DRAFT --publish--> ACTIVE --+--close---> CLOSED
                              +--match---> MATCHED
                              +--expiresAt lewat--> EXPIRED (job expireOpportunities)
+                             +--membership EXPIRED (job expireMemberships, hanya OFFER)-->
+                                  keep 1 terbaru ACTIVE, sisanya CLOSED
 ```
 Transisi saat ini: `PATCH /opportunities/:id` (manual, bebas set status apa pun oleh
 pemilik) + job `expireOpportunities` (otomatis, ACTIVE->EXPIRED). Belum ada validasi
 transisi eksplisit (beda dari Deal/Invitation di bawah) — dicatat sebagai gap, lihat
 `PROJECT_CHECKLIST.md` MVP Phase 5/6.
+
+**Revisi produk (FR-15, belum di kode):** saat membership Profile menjadi EXPIRED, job
+`expireMemberships` wajib men-trim Offer `ACTIVE` milik Profile itu: 1 terbaru (`createdAt`
+desc) tetap ACTIVE, sisanya CLOSED. Need tidak diubah oleh job membership.
+
+**Kuota (FR-15, belum di kode):** max 20 Offer ACTIVE per Profile saat membership ACTIVE;
+enforce di `createOpportunity`.
 
 ## Invitation
 
@@ -25,6 +34,9 @@ PENDING --accept--> ACCEPTED --(otomatis buat Deal berstatus NEGOTIATION)
 ```
 Endpoint: `PATCH /invitations/:id/respond` (`action: ACCEPT | REJECT`). Sekali `ACCEPTED`/
 `REJECTED`/`EXPIRED`, status final — tidak ada transisi balik.
+
+**Revisi produk (FR-17):** Invitation adalah jalur formal ke Deal. Chat dari Opportunity
+(FR-16) tidak bergantung pada status Invitation.
 
 ## Deal
 
@@ -50,10 +62,20 @@ meninjau `FraudFlag` terkait (lihat modul `fraud/`, dibekukan tapi kode tetap ak
 ```
 INACTIVE --payment PAID (webhook)--> ACTIVE --expiresAt lewat (job expireMemberships)--> EXPIRED
                                          ^                                                  |
+                                         |                                                  |
                                          +------------- renewal (checkout ulang) -----------+
+                                                                                            |
+                                                                                            v
+                                                                    side-effect (FR-15, belum di kode):
+                                                                    Offer ACTIVE milik profile →
+                                                                    keep 1 terbaru ACTIVE,
+                                                                    sisanya CLOSED
 ```
 `Membership.status` HANYA berubah lewat `membershipService` — tidak ada endpoint yang
 mengizinkan user set status langsung (kecuali `dev-activate`, diblokir di production).
+
+`getActiveMembership` / `hasActiveMembership` juga menolak membership yang `expiresAt` sudah
+lewat meskipun status di DB masih ACTIVE (defense in depth jika scheduler belum jalan).
 
 ## MembershipTransaction
 

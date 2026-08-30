@@ -47,7 +47,7 @@ CARI SolutionCategory (keyword lookup, deterministik dari basis pengetahuan)
 
 ## Layer 1 — Alur bisnis inti (Register → ... → Deal)
 
-Alur utama end-to-end (sesuai desain awal yang disepakati):
+Alur utama end-to-end (revisi produk: chat cepat vs invitation formal):
 
 ```
 START
@@ -67,6 +67,8 @@ START
   │
   ▼
 3. CREATE OPPORTUNITY (Need / Offer)
+   Need: gratis
+   Offer: butuh membership ACTIVE + kuota max 20 Offer ACTIVE / Profile (FR-15)
    Category, Capability, Location, Budget, Tags,
    Description, Priority, Visibility, Media
   │
@@ -91,16 +93,21 @@ START
 7. USER MEMILIH HASIL
    Lihat: Foto, Dokumen, Rating, Review, Badge Verified, Statistik, Trust Score
   │
-  ▼
-8. INVITATION ENGINE
-   Buat Opportunity invite, status PENDING
-   Simpan: Match Score, Breakdown, Message → Notification
-  │
-  ├──▶ ACCEPT ──▶ Tampilkan Kontak ──▶ NEGOTIATION ──▶ DEAL ──▶ IN PROGRESS ──▶ [FRAUD CHECK] ──▶ COMPLETED
-  │                                                                                    │
-  │                                                                          risk score tinggi?
-  │                                                                          → BLOCKED, admin review
-  └──▶ REJECT ──▶ Selesai                                          CANCELLED / EXPIRED
+  ├──────────────────────────────────────┐
+  ▼                                      ▼
+7a. CHAT CEPAT (FR-16)              8. INVITATION FORMAL (FR-07 / FR-17)
+   Dari Opportunity (NEED/OFFER)       Buat invite, status PENDING
+   Tanpa wajib membership              Match Score, Breakdown, Message
+   Rate limit + block/report           → Notification
+   Conversation langsung                 │
+                                          ├──▶ ACCEPT ──▶ Deal NEGOTIATION
+                                          │         ──▶ DEAL ──▶ IN PROGRESS
+                                          │         ──▶ [FRAUD CHECK] ──▶ COMPLETED
+                                          │                    risk tinggi? BLOCKED
+                                          └──▶ REJECT / EXPIRED ──▶ Selesai
+
+Membership EXPIRED (job):
+  Offer ACTIVE milik profile → keep 1 terbaru, sisanya CLOSED (FR-15)
 ```
 
 ## Pemetaan ke Kode
@@ -118,7 +125,9 @@ START
 | 4. Boost | `POST /api/boosts/:opportunityId/activate` |
 | 5+6. Matching + Ranking | `GET /api/matching/:opportunityId/run` |
 | 7. User memilih hasil | `GET /api/profiles/:id`, `GET /api/reviews/profile/:profileId` |
-| 8. Invitation | `POST /api/invitations`, `PATCH /api/invitations/:id/respond` |
+| 7a. Chat cepat dari Opportunity | `POST` conversation (modul `chat/`) — policy di `chat.policy.js` (revisi FR-16 menyusul di kode) |
+| 8. Invitation formal | `POST /api/invitations`, `PATCH /api/invitations/:id/respond` |
 | Negotiation → Deal | `PATCH /api/invitations/deals/:id` |
 | Fraud Check (gerbang sebelum COMPLETED) | `src/modules/fraud/fraud.service.js` → `runFraudChecks()`, dipanggil dari `deal.controller.js` |
 | Review insiden fraud (admin) | `GET /api/fraud-flags`, `PATCH /api/fraud-flags/:id/review` |
+| Membership expire + trim Offer | `src/jobs/expireMemberships.job.js` (side-effect FR-15 menyusul di kode) |

@@ -17,6 +17,8 @@ sesuai kebutuhan bisnis.
 - Party dapat membuat Opportunity bertipe NEED atau OFFER
 - Field: category, capability, location, budget range, tags, priority, visibility, media
 - Party dapat mengubah status (draft/active/closed) & data Opportunity miliknya
+- **Need selalu gratis** (tidak butuh membership)
+- **Offer hanya boleh dibuat** jika Profile pemilik punya membership ACTIVE (lihat juga FR-15)
 
 ## FR-04 Boost ✅
 - Party dapat mengaktifkan paket boost (FREE/BASIC/PREMIUM/VIP) pada Opportunity
@@ -35,8 +37,11 @@ sesuai kebutuhan bisnis.
 ## FR-07 Invitation & Deal ✅
 - User dapat mengirim Invitation dari hasil Match
 - Penerima dapat Accept/Reject
-- Accept membuka kontak & membuat Deal (NEGOTIATION)
+- Accept membuat Deal (NEGOTIATION) — jalur formal menuju kesepakatan
 - Deal dapat bertransisi: NEGOTIATION → DEAL → IN_PROGRESS → COMPLETED/CANCELLED
+- **Catatan revisi produk:** Invitation **bukan** syarat wajib untuk memulai chat dari
+  Opportunity. Chat cepat (FR-16) dan Invitation formal adalah dua jalur paralel.
+  Accept invitation tetap membuka/mengaitkan alur Deal; tidak menggantikan chat.
 
 ## FR-08 Review & Reputasi ✅
 - Setelah Deal COMPLETED, kedua pihak dapat saling memberi rating & review
@@ -57,11 +62,43 @@ sesuai kebutuhan bisnis.
 
 ---
 
-## Requirement Baru (belum diimplementasi)
+## Requirement Baru (belum diimplementasi / revisi produk)
 
-> Tambahkan di sini requirement yang belum ada, misal:
+### FR-15 Offer quota & membership lifecycle ⬜
+- Saat membership **ACTIVE**, satu Profile boleh memiliki maksimal **20** Opportunity tipe `OFFER`
+  dengan status `ACTIVE` (kuota dihitung lintas semua Party milik Profile tersebut).
+- Membuat Offer ke-21 (ACTIVE) ditolak dengan error bisnis yang jelas (bukan 500).
+- Saat membership menjadi **EXPIRED** (job `expireMemberships` atau cek `expiresAt`):
+  - Ambil semua Offer `ACTIVE` milik Profile tersebut
+  - Urutkan `createdAt` descending
+  - **1 Offer terbaru** tetap `ACTIVE`
+  - Sisanya diubah ke `CLOSED`
+- Membuat Offer **baru** tetap membutuhkan membership ACTIVE (aturan FR-03 tidak berubah).
+- Manfaat membership: kuota Offer, prioritas matching/badge, limit chat lebih longgar —
+  **bukan** satu-satunya kunci untuk chat dari Opportunity (lihat FR-16).
 
-- [ ] FR-11 Auto-expire Opportunity/Invitation via scheduled job — *(sudah ada, lihat FR sebelumnya & Phase 11 checklist)*
+### FR-16 Chat access (revisi anti-spam) ⬜
+- Chat dari konteks **Opportunity** (`originType: NEED` atau `OFFER` + `opportunityId` valid):
+  **diizinkan tanpa membership** (baik initiator maupun recipient).
+- Chat **cold DM** (`originType: PROFILE`, tanpa opportunity):
+  tetap dibatasi — salah satu: recipient membership ACTIVE, **atau** initiator/profile verified,
+  **atau** rate limit sangat ketat (lihat angka di bawah).
+- Conversation yang **sudah ada** selalu boleh dilanjutkan (reply), terlepas dari status membership.
+- **Anti-spam (wajib, pengganti gate membership pada chat Opportunity):**
+  - Maks. **5** conversation baru per Profile per hari (non-member); member aktif lebih longgar (mis. 30/hari)
+  - Maks. **20** pesan per jam ke lawan yang belum pernah membalas
+  - Block & report user (sudah ada fondasi admin/report)
+- Invitation **tidak wajib** untuk memulai chat dari Opportunity.
+
+### FR-17 Invitation vs Chat ⬜
+- **Invitation** = undangan formal matching → Accept → Deal (NEGOTIATION).
+- **Chat dari Opportunity** = jalur komunikasi cepat, terpisah dari state machine Invitation.
+- User boleh: (A) Chat sekarang, dan/atau (B) Kirim Invitation formal.
+- Accept invitation boleh mengaitkan/membuat conversation jika belum ada; tidak memaksa user
+  melewati Accept hanya untuk mengirim pesan pertama dari halaman Opportunity.
+
+### Lainnya (backlog lama)
+- [ ] FR-11 Auto-expire Opportunity/Invitation via scheduled job — *(sebagian sudah ada di Phase 11)*
 - [ ] FR-12 Notifikasi Email/WhatsApp
 - [ ] FR-13 Dashboard Admin untuk moderasi & statistik (termasuk dashboard FraudFlag)
 - [ ] FR-14 Multi-member Party (bukan hanya 1 owner)

@@ -29,9 +29,7 @@ const JOBS = {
 };
 
 const GROUPS = {
-  // Setiap ~15 menit (mirip scheduler.config expire opportunities/invitations)
   frequent: ['expireOpportunities', 'expireInvitations'],
-  // Sekali sehari (membership + trim Offer, stats, cleanup, fraud)
   daily: ['expireMemberships', 'recomputePartyStats', 'cleanupNotifications', 'fraudScan'],
   all: Object.keys(JOBS),
 };
@@ -57,27 +55,32 @@ function resolveJobNames(argv) {
   return names;
 }
 
+async function runJob(name) {
+  const fn = JOBS[name];
+  if (!fn) {
+    throw new Error(`Unknown job "${name}". Jobs: ${Object.keys(JOBS).join(', ')}`);
+  }
+  logger.info(`run-once: starting job "${name}"`);
+  const started = Date.now();
+  try {
+    const result = await fn();
+    logger.info(`run-once: finished job "${name}"`, {
+      result,
+      ms: Date.now() - started,
+    });
+  } catch (err) {
+    logger.error(`run-once: job "${name}" failed`, { error: err.message, stack: err.stack });
+    throw err;
+  }
+}
+
 async function main() {
   const jobNames = resolveJobNames(process.argv.slice(2));
-
-  for (const name of jobNames) {
-    const fn = JOBS[name];
-    if (!fn) {
-      throw new Error(`Unknown job "${name}". Jobs: ${Object.keys(JOBS).join(', ')}`);
-    }
-    logger.info(`run-once: starting job "${name}"`);
-    const started = Date.now();
-    try {
-      const result = await fn();
-      logger.info(`run-once: finished job "${name}"`, {
-        result,
-        ms: Date.now() - started,
-      });
-    } catch (err) {
-      logger.error(`run-once: job "${name}" failed`, { error: err.message, stack: err.stack });
-      throw err;
-    }
-  }
+  // Sequential (bukan for...of) — airbnb no-restricted-syntax
+  await jobNames.reduce(
+    (chain, name) => chain.then(() => runJob(name)),
+    Promise.resolve()
+  );
 }
 
 main()

@@ -1,5 +1,4 @@
 const { z } = require('zod');
-const { paginationQuerySchema } = require('../shared/pagination');
 
 const startConversationSchema = {
   body: z.object({
@@ -9,19 +8,38 @@ const startConversationSchema = {
   }),
 };
 
-const idParamSchema = { params: z.object({ id: z.string().uuid() }) };
+const idParamSchema = {
+  params: z.object({ id: z.string().uuid() }),
+};
 
 const getMessagesSchema = {
   params: z.object({ id: z.string().uuid() }),
-  query: paginationQuerySchema,
+  query: z.object({
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+  }),
 };
 
 const sendMessageSchema = {
   params: z.object({ id: z.string().uuid() }),
   body: z.object({
-    type: z.enum(['TEXT', 'IMAGE', 'ATTACHMENT']).default('TEXT'),
-    content: z.string().max(2000).optional(),
+    type: z.enum(['TEXT', 'IMAGE', 'ATTACHMENT']).optional(),
+    content: z.string().max(5000).optional(),
   }),
 };
 
-module.exports = { startConversationSchema, idParamSchema, getMessagesSchema, sendMessageSchema };
+const reportPeerSchema = {
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    reason: z.enum(['SPAM', 'PENIPUAN', 'KONTEN_TIDAK_PANTAS', 'PELECEHAN', 'LAINNYA']),
+    description: z.string().max(1000).optional(),
+  }),
+};
+
+module.exports = {
+  startConversationSchema,
+  idParamSchema,
+  getMessagesSchema,
+  sendMessageSchema,
+  reportPeerSchema,
+};

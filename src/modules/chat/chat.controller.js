@@ -1,8 +1,11 @@
+const prisma = require('../../config/prisma');
 const ApiError = require('../../utils/apiError');
+const ErrorCodes = require('../../utils/errorCodes');
 const { created, success } = require('../../utils/apiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const { uploadBuffer } = require('../../utils/cloudinaryUpload');
 const chatService = require('./chat.service');
+const throttleConfig = require('../../config/throttle.config');
 
 const startConversation = asyncHandler(async (req, res) => {
   const { recipientProfileId, originType, opportunityId } = req.body;
@@ -12,7 +15,11 @@ const startConversation = asyncHandler(async (req, res) => {
     originType,
     opportunityId,
   });
-  return created(res, result.conversation, result.isNew ? 'Conversation started' : 'Conversation already exists');
+  return created(
+    res,
+    result.conversation,
+    result.isNew ? 'Conversation started' : 'Conversation already exists'
+  );
 });
 
 const listConversations = asyncHandler(async (req, res) => {
@@ -36,14 +43,6 @@ const getMessages = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * REST endpoint utamanya untuk IMAGE/ATTACHMENT (perlu multipart upload).
- * Pesan TEXT sebaiknya lewat WebSocket (real-time) — lihat src/core/socket.js —
- * tapi endpoint ini tetap menerima TEXT juga sebagai fallback non-WS. Broadcast
- * real-time & notifikasi TIDAK ditangani di sini — chatService.sendMessage()
- * sudah emit event, listener terpisah (socket.js, notification.listener.js)
- * yang menindaklanjuti.
- */
 const sendMessage = asyncHandler(async (req, res) => {
   const { type, content } = req.body;
   let mediaUrl;
@@ -51,7 +50,10 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   if (req.file) {
     const resourceType = req.file.mimetype.startsWith('image/') ? 'image' : 'raw';
-    const uploaded = await uploadBuffer(req.file.buffer, { folder: 'chat-media', resourceType });
+    const uploaded = await uploadBuffer(req.file.buffer, {
+      folder: 'chat-media',
+      resourceType,
+    });
     mediaUrl = uploaded.url;
     mediaName = req.file.originalname;
   } else if (type !== 'TEXT') {
@@ -71,8 +73,65 @@ const sendMessage = asyncHandler(async (req, res) => {
 });
 
 const markAsRead = asyncHandler(async (req, res) => {
-  await chatService.markAsRead({ conversationId: req.params.id, profileId: req.profile.id });
+  await chatService.markAsRead({
+    conversationId: req.params.id,
+    profileId: req.profile.id,
+  });
   return success(res, null, 'Marked as read');
 });
 
-module.exports = { startConversation, listConversations, getMessages, sendMessage, markAsRead };
+/**
+ * Laporkan lawan bicara dari dalam conversation (FR-16 anti-spam).
+ * Hanya partisipan yang boleh; target = participant lain.
+ */
+const reportConversationPeer = asyncHandler(async (req, res) => {
+  const conversationId = req.params.id;
+  const { reason, description } = req.body;
+  const reporterId = req.profile.id;
+
+  const { participantIds } = await chatService.assertParticipant(conversationId, reporterId);
+  const reportedId = participantIds.find((id) => id !== reporterId);
+  if (!reportedId) {
+    throw ApiError.badRequest('Lawan bicara tidak ditemukan', null, ErrorCodes.VALIDATION_ERROR);
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const existingPending = await prisma.userReport.count({
+    where: {
+      reporterId,
+      reportedId,
+      status: 'PENDING',
+      createdAt: { gte: since },
+    },
+  });
+  const maxSame = throttleConfig.report.maxPendingSameTargetPerDay || 1;
+  if (existingPending >= maxSame) {
+    throw ApiError.conflict(
+      'Anda sudah memiliki laporan aktif untuk pengguna ini.',
+      { reportedId, conversationId },
+      ErrorCodes.CONFLICT
+    );
+  }
+
+  const report = await prisma.userReport.create({
+    data: {
+      reporterId,
+      reportedId,
+      reason,
+      description: description
+        ? `[chat:${conversationId}] ${description}`
+        : `[chat:${conversationId}]`,
+    },
+  });
+
+  return created(res, report, 'Laporan dari chat diterima, akan ditinjau admin');
+});
+
+module.exports = {
+  startConversation,
+  listConversations,
+  getMessages,
+  sendMessage,
+  markAsRead,
+  reportConversationPeer,
+};

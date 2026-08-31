@@ -5,8 +5,9 @@ const ErrorCodes = require('../../utils/errorCodes');
 const PaymentGateway = require('../../core/payment/PaymentGateway');
 const pricingService = require('../pricing/pricing.service');
 const logger = require('../../core/logger');
+const cache = require('../../core/cache');
+const cacheConfig = require('../../config/cache.config');
 
-/** Ambil-atau-buat record Membership untuk sebuah Profile (selalu ada, default INACTIVE). */
 async function getOrCreateMembership(profileId) {
   const existing = await prisma.membership.findUnique({ where: { profileId } });
   if (existing) return existing;
@@ -22,21 +23,38 @@ async function getActiveMembership(profileId) {
 }
 
 async function hasActiveMembership(profileId) {
+  const key = cacheConfig.keys.membershipActive(profileId);
+  const cached = await cache.get(key);
+  if (typeof cached === 'boolean') return cached;
+
   const active = await getActiveMembership(profileId);
-  return Boolean(active);
+  const value = Boolean(active);
+  await cache.set(key, value, cacheConfig.ttl.membershipActive);
+  return value;
+}
+
+async function invalidateMembershipCache(profileId) {
+  if (!profileId) return;
+  await cache.del(cacheConfig.keys.membershipActive(profileId));
 }
 
 async function listPlans() {
-  const plans = await prisma.membershipPlan.findMany({
-    include: { pricingHistory: { where: { status: 'ACTIVE' } } },
-  });
-  return plans.map((p) => ({
-    id: p.id,
-    name: p.name,
-    durationDays: p.durationDays,
-    features: p.features,
-    currentPrice: p.pricingHistory[0] || null,
-  }));
+  return cache.getOrSet(
+    cacheConfig.keys.membershipPlans,
+    async () => {
+      const plans = await prisma.membershipPlan.findMany({
+        include: { pricingHistory: { where: { status: 'ACTIVE' } } },
+      });
+      return plans.map((p) => ({
+        id: p.id,
+        name: p.name,
+        durationDays: p.durationDays,
+        features: p.features,
+        currentPrice: p.pricingHistory[0] || null,
+      }));
+    },
+    cacheConfig.ttl.membershipPlans
+  );
 }
 
 function generateInvoiceNumber() {
@@ -45,7 +63,6 @@ function generateInvoiceNumber() {
   return `INV-${datePart}-${randomPart}`;
 }
 
-/** Bandingkan amount webhook vs DB (toleransi 1 rupiah untuk float/string Midtrans). */
 function amountsMatch(expected, received) {
   if (expected == null || received == null) return false;
   return Math.abs(Number(expected) - Number(received)) < 1;
@@ -53,9 +70,13 @@ function amountsMatch(expected, received) {
 
 async function checkout({ profileId, planId, voucherCode, idempotencyKey }) {
   if (idempotencyKey) {
-    const existing = await prisma.membershipTransaction.findUnique({ where: { idempotencyKey } });
+    const existing = await prisma.membershipTransaction.findUnique({
+      where: { idempotencyKey },
+    });
     if (existing) {
-      logger.info('Checkout idempotency hit — returning existing transaction', { idempotencyKey });
+      logger.info('Checkout idempotency hit — returning existing transaction', {
+        idempotencyKey,
+      });
       return {
         transaction: existing,
         paymentUrl: existing.gatewayRedirectUrl,
@@ -151,14 +172,6 @@ async function checkout({ profileId, planId, voucherCode, idempotencyKey }) {
   }
 }
 
-/**
- * Webhook payment gateway.
- * - Signature wajib valid
- * - Amount wajib cocok dengan transaksi DB
- * - Claim atomik status PENDING → menghindari double-activate race
- * - Order tidak dikenal (signature valid) → { acknowledged: true } agar Midtrans tidak retry
- * - Order BOOST-* di-forward ke boost.service
- */
 async function handlePaymentWebhook(provider, payload) {
   const normalizedProvider = String(provider || 'MIDTRANS').toUpperCase();
 
@@ -200,7 +213,6 @@ async function handlePaymentWebhook(provider, payload) {
   });
 
   if (!transaction) {
-    // Signature valid tapi order tidak ada di sistem kita — ACK supaya Midtrans stop retry
     logger.warn('Payment webhook: unknown order acknowledged', {
       provider: normalizedProvider,
       orderId: result.orderId,
@@ -219,7 +231,6 @@ async function handlePaymentWebhook(provider, payload) {
     return transaction;
   }
 
-  // Integrity: amount webhook harus cocok dengan snapshot checkout
   if (result.status === 'PAID' || result.status === 'FAILED' || result.status === 'EXPIRED') {
     if (!amountsMatch(transaction.amount, result.grossAmount)) {
       logger.error('Payment webhook: amount mismatch', {
@@ -231,7 +242,6 @@ async function handlePaymentWebhook(provider, payload) {
     }
   }
 
-  // Atomic claim: hanya satu worker yang boleh memproses dari PENDING
   const claimData = {
     status: result.status,
     paymentMethod: result.method,
@@ -260,7 +270,6 @@ async function handlePaymentWebhook(provider, payload) {
   });
 
   if (result.status === 'PAID') {
-    // Extend dari expiresAt aktif jika masih valid; else dari now
     const current = transaction.membership;
     const now = new Date();
     const base =
@@ -275,6 +284,8 @@ async function handlePaymentWebhook(provider, payload) {
       where: { id: transaction.membershipId },
       data: { status: 'ACTIVE', activatedAt: now, expiresAt },
     });
+
+    await invalidateMembershipCache(transaction.membership.profileId);
 
     logger.info('Membership activated via payment', {
       profileId: transaction.membership.profileId,
@@ -334,10 +345,12 @@ async function listMyTransactions(profileId) {
 async function devActivate({ profileId, durationDays = 30 }) {
   const membership = await getOrCreateMembership(profileId);
   const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
-  return prisma.membership.update({
+  const updated = await prisma.membership.update({
     where: { id: membership.id },
     data: { status: 'ACTIVE', activatedAt: new Date(), expiresAt },
   });
+  await invalidateMembershipCache(profileId);
+  return updated;
 }
 
 const { expireMembershipsAndTransitionTier } = require('./expireMemberships.service');
@@ -346,6 +359,7 @@ module.exports = {
   getOrCreateMembership,
   getActiveMembership,
   hasActiveMembership,
+  invalidateMembershipCache,
   listPlans,
   checkout,
   handlePaymentWebhook,

@@ -5,6 +5,8 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { computeMatchScore, passesHardFilter } = require('./matching.service');
 const { computeFinalScore } = require('../ranking/ranking.service');
 const { recomputePartyStats } = require('../ranking/partyStats.service');
+const cache = require('../../core/cache');
+const cacheConfig = require('../../config/cache.config');
 
 const oppInclude = {
   capabilities: true,
@@ -12,7 +14,6 @@ const oppInclude = {
   boost: true,
 };
 
-/** Active paid boost only — PENDING/FAILED must not affect ranking. */
 function activeBoostWeight(boost) {
   if (!boost) return 0;
   if (boost.paymentStatus !== 'PAID') return 0;
@@ -20,19 +21,7 @@ function activeBoostWeight(boost) {
   return Math.min(100, boost.priorityWeight || 0);
 }
 
-/**
- * STEP 5 + STEP 6: Matching Engine + Ranking Engine
- * Finds candidate opposite-type opportunities, hard-filters them, scores them,
- * ranks them with reputation/boost/penalties, and persists a Match row per pair
- * (so an Invitation can later reference it).
- */
-const runMatching = asyncHandler(async (req, res) => {
-  const source = await prisma.opportunity.findUnique({
-    where: { id: req.params.opportunityId },
-    include: oppInclude,
-  });
-  if (!source) throw ApiError.notFound('Opportunity not found');
-
+async function computeMatchingResults(source, limit) {
   const oppositeType = source.type === 'NEED' ? 'OFFER' : 'NEED';
 
   const candidates = await prisma.opportunity.findMany({
@@ -40,16 +29,13 @@ const runMatching = asyncHandler(async (req, res) => {
       type: oppositeType,
       status: 'ACTIVE',
       id: { not: source.id },
-      partyId: { not: source.partyId }, // don't match a party with itself
-      party: { ownerId: { not: source.party.ownerId } }, // FRAUD GUARD: don't match two Party records owned by the same Profile
+      partyId: { not: source.partyId },
+      party: { ownerId: { not: source.party.ownerId } },
     },
     include: oppInclude,
-    take: 200, // pre-limit pool for performance; refine with DB filters as data grows
+    take: 200,
   });
 
-  // FRAUD GUARD: also exclude parties with a cached SAME_OWNER/SHARED_LEGAL_ID/
-  // SHARED_DOCUMENT relationship (covers cases ownerId alone can't catch, e.g.
-  // two different Profile accounts controlled by the same person/company).
   const knownRelated = await prisma.partyRelationship.findMany({
     where: {
       OR: [{ partyAId: source.partyId }, { partyBId: source.partyId }],
@@ -100,9 +86,8 @@ const runMatching = asyncHandler(async (req, res) => {
   );
 
   scored.sort((a, b) => b.finalScore - a.finalScore);
-  const top = scored.slice(0, req.query.limit);
+  const top = scored.slice(0, limit);
 
-  // Persist Match rows (upsert) so they can be referenced by an Invitation later
   const persisted = await Promise.all(
     top.map(({ candidate, matchScore, matchBreakdown, finalScore }) => {
       const [needId, offerId] =
@@ -122,7 +107,7 @@ const runMatching = asyncHandler(async (req, res) => {
     })
   );
 
-  const results = top.map((t, i) => ({
+  return top.map((t, i) => ({
     matchId: persisted[i].id,
     opportunity: {
       id: t.candidate.id,
@@ -141,6 +126,26 @@ const runMatching = asyncHandler(async (req, res) => {
     matchBreakdown: t.matchBreakdown,
     rankingBreakdown: t.rankingBreakdown,
   }));
+}
+
+const runMatching = asyncHandler(async (req, res) => {
+  const limit = Number(req.query.limit) || 20;
+  const opportunityId = req.params.opportunityId;
+
+  const source = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    include: oppInclude,
+  });
+  if (!source) throw ApiError.notFound('Opportunity not found');
+
+  const cacheKey = cacheConfig.keys.matching(opportunityId, limit);
+
+  // Cache hanya payload response (match rows tetap di-persist di loader)
+  const results = await cache.getOrSet(
+    cacheKey,
+    () => computeMatchingResults(source, limit),
+    cacheConfig.ttl.matchingResult
+  );
 
   return success(res, results, `Found ${results.length} ranked candidates`);
 });

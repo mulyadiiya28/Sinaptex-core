@@ -5,22 +5,15 @@ const cache = require('../../core/cache');
 const cacheConfig = require('../../config/cache.config');
 const boostService = require('./boost.service');
 
-const BOOST_PLANS_CACHE_KEY = 'boost-plans:all';
-
 const listPlans = asyncHandler(async (req, res) => {
-  const cached = await cache.get(BOOST_PLANS_CACHE_KEY);
-  if (cached) return success(res, cached);
-
-  const plans = await prisma.boostPlan.findMany({ orderBy: { priorityWeight: 'asc' } });
-  await cache.set(BOOST_PLANS_CACHE_KEY, plans, cacheConfig.ttl.boostPlans);
+  const plans = await cache.getOrSet(
+    cacheConfig.keys.boostPlans,
+    () => prisma.boostPlan.findMany({ orderBy: { priorityWeight: 'asc' } }),
+    cacheConfig.ttl.boostPlans
+  );
   return success(res, plans);
 });
 
-/**
- * Checkout / aktivasi boost.
- * FREE → aktif langsung.
- * Berbayar → paymentUrl Midtrans Snap; jangan percaya paymentStatus dari client.
- */
 const checkout = asyncHandler(async (req, res) => {
   const { opportunityId } = req.params;
   const { planType } = req.body;
@@ -30,6 +23,9 @@ const checkout = asyncHandler(async (req, res) => {
     profileId: req.profile.id,
     planType,
   });
+
+  // Boost aktif mengubah ranking → invalidasi cache matching opportunity ini
+  await cache.delByPattern(`matching:${opportunityId}:*`);
 
   if (result.free) {
     return success(res, result, 'Boost FREE diaktifkan');

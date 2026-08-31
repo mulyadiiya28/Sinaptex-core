@@ -2,6 +2,8 @@ const prisma = require('../../config/prisma');
 const logger = require('../../core/logger');
 const opportunityPolicyService = require('../opportunity/opportunityPolicy.service');
 const { sendEmail } = require('../../utils/mailer');
+const cache = require('../../core/cache');
+const cacheConfig = require('../../config/cache.config');
 
 async function expireMembershipsAndTransitionTier(options = {}) {
   const asOfDate = options.asOfDate || new Date();
@@ -38,6 +40,11 @@ async function expireMembershipsAndTransitionTier(options = {}) {
     where: { id: { in: membershipIds } },
     data: { status: 'EXPIRED' },
   });
+
+  // Invalidate membership active flags
+  await Promise.all(
+    expiredMemberships.map((m) => cache.del(cacheConfig.keys.membershipActive(m.profileId)))
+  );
 
   const policy = await opportunityPolicyService.getPolicy();
   const keepCount =

@@ -1,9 +1,9 @@
 const prisma = require('../../config/prisma');
-const ApiError = require('../../utils/apiError');
-const { success } = require('../../utils/apiResponse');
+const { success, created } = require('../../utils/apiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const cache = require('../../core/cache');
 const cacheConfig = require('../../config/cache.config');
+const boostService = require('./boost.service');
 
 const BOOST_PLANS_CACHE_KEY = 'boost-plans:all';
 
@@ -16,39 +16,25 @@ const listPlans = asyncHandler(async (req, res) => {
   return success(res, plans);
 });
 
-// STEP 4: Boost Engine - attach a package (FREE/BASIC/PREMIUM/VIP) to an Opportunity
-const activateBoost = asyncHandler(async (req, res) => {
+/**
+ * Checkout / aktivasi boost.
+ * FREE → aktif langsung.
+ * Berbayar → paymentUrl Midtrans Snap; jangan percaya paymentStatus dari client.
+ */
+const checkout = asyncHandler(async (req, res) => {
   const { opportunityId } = req.params;
-  const { planType, paymentStatus } = req.body;
+  const { planType } = req.body;
 
-  const opportunity = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    include: { party: true },
-  });
-  if (!opportunity) throw ApiError.notFound('Opportunity not found');
-  if (opportunity.party.ownerId !== req.profile.id) throw ApiError.forbidden();
-
-  const plan = await prisma.boostPlan.findUnique({ where: { type: planType } });
-  if (!plan) throw ApiError.notFound(`Boost plan ${planType} not configured. Run the seed script.`);
-
-  const startAt = new Date();
-  const expiredAt = new Date(startAt.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
-
-  const boost = await prisma.opportunityBoost.upsert({
-    where: { opportunityId },
-    update: { planId: plan.id, priorityWeight: plan.priorityWeight, startAt, expiredAt, paymentStatus },
-    create: {
-      opportunityId,
-      planId: plan.id,
-      priorityWeight: plan.priorityWeight,
-      startAt,
-      expiredAt,
-      paymentStatus,
-    },
-    include: { plan: true },
+  const result = await boostService.checkout({
+    opportunityId,
+    profileId: req.profile.id,
+    planType,
   });
 
-  return success(res, boost, 'Boost activated');
+  if (result.free) {
+    return success(res, result, 'Boost FREE diaktifkan');
+  }
+  return created(res, result, 'Checkout boost dibuat — arahkan user ke paymentUrl');
 });
 
-module.exports = { listPlans, activateBoost };
+module.exports = { listPlans, checkout };

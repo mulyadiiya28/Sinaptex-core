@@ -145,20 +145,32 @@ async function checkout({ profileId, planId, voucherCode, idempotencyKey }) {
  * WAJIB valid sebelum status apa pun diproses — dilakukan oleh adapter
  * (PaymentGateway.of(provider).verifyWebhook()), bukan di sini.
  *
- * IDEMPOTENCY (perbaikan bug): payment gateway (mis. Midtrans) BISA dan MEMANG
- * mengirim notifikasi yang sama berkali-kali (retry policy mereka sendiri).
- * Kalau transaksi SUDAH berstatus terminal (PAID/FAILED/EXPIRED/CANCELLED),
- * webhook kedua dst untuk order yang sama di-NO-OP — supaya
- * `Membership.expiresAt` tidak ikut molor tiap kali notifikasi PAID yang sama
- * diproses ulang.
+ * Juga meneruskan order BOOST-* ke boost.service (satu URL notifikasi Midtrans).
+ *
+ * IDEMPOTENCY: payment gateway bisa mengirim notifikasi yang sama berkali-kali.
+ * Status terminal → no-op.
  */
 async function handlePaymentWebhook(provider, payload) {
-  const gateway = PaymentGateway.of(provider);
+  const normalizedProvider = String(provider || 'MIDTRANS').toUpperCase();
+
+  // Boost orders share the same Midtrans notification URL
+  const boostService = require('../boost/boost.service');
+  const orderIdHint = payload?.order_id || payload?.orderId;
+  if (boostService.isBoostOrderId(orderIdHint)) {
+    return boostService.handlePaymentWebhook(normalizedProvider, payload);
+  }
+
+  const gateway = PaymentGateway.of(normalizedProvider);
   const result = gateway.verifyWebhook(payload);
 
   if (!result.valid) {
-    logger.warn('Payment webhook: invalid signature, ignoring', { provider, orderId: result.orderId });
+    logger.warn('Payment webhook: invalid signature, ignoring', { provider: normalizedProvider, orderId: result.orderId });
     throw ApiError.forbidden('Invalid webhook signature', ErrorCodes.WEBHOOK_INVALID_SIGNATURE);
+  }
+
+  // Fallback: order boost yang lolos hint di atas
+  if (boostService.isBoostOrderId(result.orderId)) {
+    return boostService.handlePaymentWebhook(normalizedProvider, payload);
   }
 
   const transaction = await prisma.membershipTransaction.findFirst({
@@ -182,14 +194,14 @@ async function handlePaymentWebhook(provider, payload) {
     },
   });
   if (!transaction) {
-    logger.warn('Payment webhook: transaction not found', { provider, orderId: result.orderId });
+    logger.warn('Payment webhook: transaction not found', { provider: normalizedProvider, orderId: result.orderId });
     throw ApiError.notFound('Transaction not found', ErrorCodes.TRANSACTION_NOT_FOUND);
   }
 
   const TERMINAL_STATUSES = ['PAID', 'FAILED', 'EXPIRED', 'CANCELLED'];
   if (TERMINAL_STATUSES.includes(transaction.status)) {
     logger.info('Payment webhook: transaction already in terminal status, no-op (idempotent)', {
-      provider,
+      provider: normalizedProvider,
       orderId: result.orderId,
       currentStatus: transaction.status,
       incomingStatus: result.status,
@@ -216,7 +228,7 @@ async function handlePaymentWebhook(provider, payload) {
     logger.info('Membership activated via payment', {
       profileId: transaction.membership.profileId,
       orderId: result.orderId,
-      provider,
+      provider: normalizedProvider,
     });
 
     // In-app notification
@@ -295,4 +307,3 @@ module.exports = {
   expireMembershipsAndTransitionTier,
   processExpiredMemberships: expireMembershipsAndTransitionTier,
 };
-

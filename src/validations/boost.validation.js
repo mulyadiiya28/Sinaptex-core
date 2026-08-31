@@ -1,12 +1,14 @@
 const { z } = require('zod');
 
-const activateBoostSchema = {
+const checkoutBoostSchema = {
   params: z.object({ opportunityId: z.string().uuid() }),
   body: z.object({
     planType: z.enum(['FREE', 'BASIC', 'PREMIUM', 'VIP']),
-    // In real life, paymentStatus would come from a payment gateway webhook.
-    paymentStatus: z.enum(['PENDING', 'PAID']).default('PENDING'),
+    // paymentStatus TIDAK diterima dari client — hanya webhook gateway yang mengaktifkan berbayar
   }),
 };
 
-module.exports = { activateBoostSchema };
+/** @deprecated alias — pakai checkoutBoostSchema */
+const activateBoostSchema = checkoutBoostSchema;
+
+module.exports = { checkoutBoostSchema, activateBoostSchema };

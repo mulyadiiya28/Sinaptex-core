@@ -3,66 +3,73 @@
 Backend engine untuk platform *business matching* **Sinaptex**.
 
 Stack: **Node.js + Express**, **Prisma ORM**, **Zod**, **Cloudinary**, **Supabase** (Postgres + Auth),
-**Socket.IO** (chat), **node-cron** / CLI jobs (scheduler).
+**Socket.IO** (chat), **Midtrans Snap** (payment adapter), **node-cron** / CLI jobs (scheduler).
 
-## Alur utama (revisi produk)
+## Alur utama
 
 ```
 Register/Login → Verification → Opportunity (Need / Offer)
-  → Boost → Matching → Ranking → User pilih hasil
-       ├─ Chat cepat dari Opportunity (tanpa wajib Invitation)     ← FR-16, policy kode belum final
+  → Boost (opsional) → Matching → Ranking → User pilih hasil
+       ├─ Chat cepat dari Opportunity (tanpa wajib Invitation)   ← FR-16 ✅
        └─ Invitation formal → Accept → Deal → … → Completed
 ```
 
 **Invitation bukan satu-satunya jalan komunikasi.** Invitation = jalur formal ke Deal.
-Chat dari Opportunity dirancang paralel (lihat `docs/product-decisions-offer-chat.md`).
+Chat dari Opportunity berjalan paralel (lihat `docs/product-decisions-offer-chat.md`).
 
-Dokumen produk / FR:
-- `docs/product-decisions-offer-chat.md` — keputusan Need, Offer, membership, chat
+Dokumen produk / teknis:
+- `docs/PROJECT_CHECKLIST.md` — checklist MVP + enterprise (sebagian dibekukan)
+- `docs/product-decisions-offer-chat.md` — Need, Offer, membership, chat
 - `docs/functional-requirement.md` — FR-15 / FR-16 / FR-17
+- `docs/deployment-guide.md` — deploy Hostinger + cron
 - `docs/flowchart.md`, `docs/state-machines.md`
-- `docs/deployment-guide.md` — deploy + **cron Hostinger**
 
 ---
 
-## Status fitur (singkat)
+## Status fitur (MVP backend)
 
 | Area | Status |
 |------|--------|
-| Auth, verification, matching, ranking, invitation, deal | ✅ Selesai |
-| Opportunity Quota: Non-member (1 Need + 1 Offer) & Member (20 Need + 20 Offer) | ✅ Selesai |
-| Expiration Job: Trim sisa 1 posting (Need & Offer) saat membership expired | ✅ Selesai |
-| CLI & Background jobs (`run-once.js`, `expireMemberships.job.js`) | ✅ Selesai |
-| Chat dari Opportunity tanpa gate membership + Anti-spam (FR-16) | ✅ Selesai |
-| Jalur Chat Mandiri / Non-blocking Invitation (FR-17) | ✅ Selesai |
-| Matching Engine Self-Match Prevention & Fraud Guard (Pencegahan sirkular) | ✅ Selesai |
-| Payment Gateway Integration (Midtrans / Xendit untuk Boost & Membership) | ⬜ Prioritas 2 |
-| Multi-channel Notifications (Email & WhatsApp Integration) (FR-12) | ⬜ Prioritas 2 |
-| Escrow & Pending Transaction Protection (Rekber B2B / Deal Protection) | ⬜ Prioritas 3 (Desain Siap) |
-| Admin Moderation & Fraud Flag Review Dashboard API (FR-13) | ⬜ Prioritas 4 |
+| Auth, Profile, Verification, Party | ✅ |
+| Opportunity (Need/Offer) + quota + expire/trim | ✅ |
+| Matching + Ranking + self-match / fraud guard | ✅ |
+| Invitation → Deal state machine + fraud gate | ✅ |
+| Chat (REST + WebSocket) + policy NEED/OFFER gratis | ✅ |
+| Chat anti-spam: rate limit conv/hari + unreplied burst | ✅ |
+| Report peer dari chat (`POST .../conversations/:id/report`) | ✅ |
+| Membership + Pricing + Midtrans checkout/webhook | ✅ kode |
+| Boost FREE langsung; berbayar via Midtrans + ranking hanya PAID | ✅ |
+| Notifikasi **in-app** (chat, deal, invitation, review, verif) | ✅ |
+| Admin panel API (users, CMS, reports, transactions, …) | ✅ |
+| Fraud flags review API | ✅ (modul dibekukan pengembangan, tetap aktif) |
+| Rate limit: global + intent + webhook + report + strict | ✅ |
+| Health check DB (`/api/v1/health`) + Prisma error code | ✅ |
+| **Production DB healthy** (ops Hostinger/Supabase) | 🔴 blocker go-live |
+| Konten legal S&K / Privasi **PUBLISHED** (admin CMS) | ⬜ ops |
+| Email / WhatsApp notification (FR-12) | ⬜ post-MVP |
+| Escrow rekber end-to-end | 🟡 schema + service ada; payout/dispute lanjut |
+| Google OAuth | ⬜ aktifkan di dashboard Supabase |
 
 ---
 
-## 1. Struktur Project
+## 1. Struktur project (ringkas)
 
 ```
 prisma/schema.prisma
 prisma/seed.js
-src/config/                  # env, prisma, cloudinary, supabase, scheduler.config
-src/jobs/
-  scheduler.js               # process panjang (VPS/Docker)
-  run-once.js                # one-shot untuk Cron Hostinger
-  expireMemberships.job.js   # membership expire + trim posting
-  expireOpportunities.job.js
-  …
+src/config/           # env, prisma, payment, throttle, cors, …
+src/core/payment/     # PaymentGateway factory + MidtransGateway
 src/modules/
-  auth/  profile/  verification/
-  opportunity/   # Need & Offer + quota berdasarkan status membership
-  boost/  matching/  ranking/
-  invitation/    # jalur formal → Deal
-  chat/          # policy: src/modules/chat/chat.policy.js (revisi FR-16 menyusul)
-  membership/  pricing/  review/  notification/
+  auth/ profile/ party/ verification/
+  opportunity/ boost/ matching/ ranking/
+  invitation/ chat/ membership/ pricing/
+  notification/ review/ report/ admin/ content/
+  escrow/ fraud/ decision/ business-diagnosis/ intent/
+src/jobs/             # scheduler + run-once (Hostinger cron)
+src/middlewares/      # auth, rateLimit, validate, error
 ```
+
+---
 
 ## 2. Setup
 
@@ -73,117 +80,100 @@ npm install
 
 ### b. Supabase
 1. Project di https://supabase.com
-2. Connection string → `DATABASE_URL` & `DIRECT_URL` di `.env`
-   - Pooler (port 6543): tambahkan `?pgbouncer=true` pada `DATABASE_URL`
-3. API keys + JWT secret → `.env`
-4. Auth providers sesuai kebutuhan
+2. `DATABASE_URL` (pooler port **6543** + `?pgbouncer=true`) dan `DIRECT_URL` (session **5432**)
+3. API keys + JWT secret di `.env`
 
-### c. Cloudinary
-Isi `CLOUDINARY_*` di `.env`.
+### c. Cloudinary & Midtrans
+```env
+CLOUDINARY_CLOUD_NAME=…
+CLOUDINARY_API_KEY=…
+CLOUDINARY_API_SECRET=…
+
+MIDTRANS_SERVER_KEY=…
+MIDTRANS_CLIENT_KEY=…
+MIDTRANS_IS_PRODUCTION=false   # true di production
+```
+
+Notification URL Midtrans (dashboard):
+```text
+https://<domain>/api/v1/membership/webhook/midtrans
+```
+Webhook memproses order membership (`INV-…`) dan boost (`BOOST-{id}`).
 
 ### d. Env, migrate, seed
 ```bash
 cp .env.example .env
 npx prisma generate
-npx prisma migrate dev --name init
+npx prisma migrate deploy   # production
+# atau: npx prisma migrate dev --name init
 npx prisma db seed
 ```
 
 ### e. Jalankan API
 ```bash
 npm run dev     # development
-npm start       # production — API saja, scheduler TIDAK ikut
+npm start       # production — API saja
 ```
 
-Default: `http://localhost:4000`, prefix `/api` (banyak route di `/api/v1/...`).
-Swagger: `http://localhost:4000/api/docs`.
-Chat WebSocket (Socket.IO) di port yang sama.
+Default: `http://localhost:4000` — prefix `/api` dan `/api/v1/...`.
+Swagger: `/api/docs`. Socket.IO di port yang sama.
 
-### f. Google OAuth
-Aktifkan di Supabase (Authentication → Providers → Google). Backend hanya verifikasi access token.
+**Hostinger build command (wajib):**
+```bash
+npm ci --omit=dev && npx prisma generate
+```
 
-### g. Background jobs
+### f. Background jobs
 
-**Shared hosting (Hostinger)** — jangan andalkan process `scheduler` 24 jam. Pakai Cron + CLI:
+**Shared hosting** — Cron + CLI (bukan process scheduler 24 jam):
 
 ```bash
 npm run jobs:frequent   # expire opportunity + invitation
-npm run jobs:daily      # membership + trim posting, stats, cleanup, fraud
+npm run jobs:daily      # membership trim, stats, cleanup, fraud
 npm run jobs:once -- expireMemberships
 ```
 
-Panduan cron hPanel: **`docs/deployment-guide.md`**.
+Detail: `docs/deployment-guide.md`.
 
-**VPS / Docker** — process terpisah:
+**VPS / Docker:** `npm run scheduler` + optional Redis workers.
 
-```bash
-npm run scheduler            # node-cron hidup terus
-npm run worker:party-stats   # butuh REDIS_URL
-npm run worker:notification  # butuh REDIS_URL
-```
-
-Tanpa Redis, API tetap jalan (cache/queue no-op).
-
-### h. Membership dev (non-production)
+### g. Membership dev (non-production)
 ```bash
 curl -X POST http://localhost:4000/api/v1/membership/dev-activate \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{ "durationDays": 30 }'
 ```
-Diblokir otomatis jika `NODE_ENV=production`.
+Diblokir jika `NODE_ENV=production`.
 
 ---
 
 ## 3. Opportunity (Need / Offer)
 
-Aturan produk saat ini:
+| Status akun | NEED ACTIVE | OFFER ACTIVE |
+|-------------|------------:|-------------:|
+| Non-member | 1 | 1 |
+| Member aktif | 20 | 20 |
+| Membership expired | keep 1 terakhir | keep 1 terakhir |
 
-| Status akun | NEED | OFFER |
-|------|------:|------:|
-| **Non-member** | Maks. **1 ACTIVE** | Maks. **1 ACTIVE** |
-| **Member aktif** | Maks. **20 ACTIVE** | Maks. **20 ACTIVE** |
-| **Membership expired / tidak aktif** | Pertahankan **1 posting terakhir** | Pertahankan **1 posting terakhir** |
+Error quota: `OPPORTUNITY_QUOTA_EXCEEDED` (dan varian Need/Offer).
 
-### Aturan penting
+Konstanta: `src/shared/constants.js`.
 
-1. **Need dan Offer sama-sama boleh dibuat oleh non-member.** Membership tidak lagi menjadi syarat untuk membuat Offer.
-2. Non-member dibatasi maksimal **1 Need ACTIVE + 1 Offer ACTIVE**.
-3. Member aktif dibatasi maksimal **20 Need ACTIVE + 20 Offer ACTIVE**.
-4. Quota dihitung berdasarkan posting berstatus `ACTIVE`, bukan jumlah seluruh history posting.
-5. Ketika membership berakhir, sistem melakukan trim dan hanya mempertahankan **1 posting terakhir untuk Need dan 1 posting terakhir untuk Offer**. Posting lain ditutup (`CLOSED`) dan tidak boleh tetap aktif.
-6. Posting `CLOSED`, `EXPIRED`, atau `CANCELLED` tidak dihitung sebagai quota ACTIVE.
-7. Need dan Offer dari pemilik/party yang sama **tidak boleh menghasilkan self-match**.
-8. User yang memiliki Need dan Offer secara bersamaan **tetap diperbolehkan** selama masing-masing quota terpenuhi.
-
-Error quota:
-- `OPPORTUNITY_QUOTA_EXCEEDED`
-
-Konstanta yang direkomendasikan di `src/shared/constants.js`:
-- `MAX_ACTIVE_FREE_NEEDS = 1`
-- `MAX_ACTIVE_FREE_OFFERS = 1`
-- `MAX_ACTIVE_MEMBER_NEEDS = 20`
-- `MAX_ACTIVE_MEMBER_OFFERS = 20`
-- `POSTINGS_KEPT_AFTER_MEMBERSHIP_EXPIRE = 1`
-
-> Catatan implementasi: README ini mendokumentasikan **aturan produk baru**. Kode opportunity dan job membership harus diaudit agar implementasinya benar-benar sama dengan aturan ini.
+Self-match (Need & Offer pihak yang sama) dicegah di Matching Engine.
 
 ---
 
-## 4. Invitation vs Chat
+## 4. Chat vs Invitation
 
-| Jalur | Fungsi | Status kode |
-|-------|--------|-------------|
-| **Invitation** | Formal matching → Accept → Deal | ✅ |
-| **Chat dari Opportunity** | Komunikasi cepat, paralel invitation | Policy **lama** masih gate membership untuk OFFER/PROFILE — **FR-16 belum diimplementasi** |
+| Jalur | Fungsi | Kode |
+|-------|--------|------|
+| **Invitation** | Formal → Accept → Deal | ✅ |
+| **Chat Opportunity** (`NEED` / `OFFER`) | Cepat, tanpa membership | ✅ |
+| **Cold DM** (`PROFILE`) | Recipient harus member aktif | ✅ |
+| **Anti-spam** | 5/30 conv baru/hari (WIB); max 20 pesan unreplied/jam | ✅ Redis + Prisma fallback |
+| **Report dari chat** | `POST /chat/conversations/:id/report` | ✅ |
 
-Saat ini di `chat.policy.js` (perilaku *berjalan* di production):
-- `originType: NEED` — tanpa gate membership
-- `originType: OFFER` / `PROFILE` — masih memerlukan membership aktif (penerima / aturan policy lama)
-
-Target produk (docs, belum kode): chat dari Opportunity (NEED/OFFER) tanpa membership + rate limit anti-spam.
-Detail: `docs/product-decisions-offer-chat.md`.
-
-### Socket.IO (ringkas)
+### Socket.IO
 ```js
 import { io } from 'socket.io-client';
 const socket = io('http://localhost:4000', { auth: { token: supabaseAccessToken } });
@@ -194,43 +184,72 @@ Upload media: `POST /api/v1/chat/conversations/:id/messages` (multipart).
 
 ---
 
-## 5. Autentikasi
+## 5. Payment (Membership & Boost)
 
-Auth di client via Supabase. Backend:
+| Produk | Checkout | Aktivasi |
+|--------|----------|----------|
+| Membership | `POST /membership/checkout` + Snap URL | Webhook → `ACTIVE` (extend jika masih aktif) |
+| Boost FREE | `POST /boosts/:opportunityId/checkout` | Langsung PAID |
+| Boost berbayar | Checkout → Snap | Webhook order `BOOST-{id}` → PAID |
+
+Keamanan webhook:
+- Verifikasi signature SHA-512 Midtrans
+- Cek `gross_amount` vs amount DB
+- Claim atomik `PENDING` (anti double-activate)
+- Order tidak dikenal (signature valid) → HTTP 200 ACK (stop retry)
+
+Ranking **hanya** memakai boost dengan `paymentStatus === PAID` dan belum expired.
+
+---
+
+## 6. Autentikasi
+
+Client: Supabase Auth. Backend:
 1. `Authorization: Bearer <supabase_access_token>`
 2. Verifikasi token
 3. Sinkron `users` + `profiles`
 
 ```
-POST /api/auth/register   (Bearer)
-GET  /api/auth/me         (Bearer)
+POST /api/v1/auth/register
+GET  /api/v1/auth/me
 ```
 
-## 6. Ringkasan endpoint
+Google OAuth: aktifkan di Supabase dashboard (backend tidak berubah).
 
-| Step | Modul | Endpoint (prefix sering `/api` atau `/api/v1`) |
-|------|--------|------------------------------------------------|
-| Register/Login | auth | `POST /auth/register`, `GET /auth/me` |
-| Verification | verification | upload + review admin |
-| Opportunity | opportunities | CRUD + media |
-| Boost | boosts | plans + activate |
-| Matching | matching | `GET /matching/:opportunityId/run` |
-| Invitation | invitations | create, respond |
-| Deal | invitations/deals | list, patch status |
-| Chat | chat | conversations + messages |
-| Membership | membership | plans, checkout, webhook |
-| Review / notif | reviews, notifications | … |
+---
 
-## 7. Matching & Ranking
+## 7. Ringkasan endpoint utama
 
-Hard filter: tipe berlawanan, `ACTIVE`, kategori, visibility, dan **bukan self-match**.
+| Modul | Endpoint (prefix `/api/v1`) |
+|-------|-----------------------------|
+| Health | `GET /health` |
+| Auth | `POST /auth/register`, `GET /auth/me` |
+| Profiles / Parties | CRUD + portfolio |
+| Opportunities | CRUD, close, search/filter |
+| Matching | `GET /matching/:opportunityId/run` |
+| Boosts | `GET /boosts/plans`, `POST /boosts/:opportunityId/checkout` |
+| Invitations / Deals | create, respond, patch status |
+| Chat | conversations, messages, read, **report** |
+| Membership | plans, checkout, webhook, transactions |
+| Reports | `POST /reports` |
+| Admin | `/admin/*` |
+| Content (CMS) | `/content/pages/:slug`, `/content/faq` |
+| Intent | `POST /intent` (rate-limited) |
 
-Scoring match (0–100): capability, location, budget, tags, text, priority.
+---
 
-Ranking: match + reputation + response + completion + activity + verification + boost − penalty.
+## 8. Matching & Ranking
+
+Hard filter: tipe berlawanan, `ACTIVE`, kategori, visibility, **bukan self-match** / related party.
+
+Match score (0–100): capability, location, budget, tags, text, priority.
+
+Final ranking: match + reputation + response + completion + activity + verification + **boost PAID** − penalty.
 Bobot: `RANKING_WEIGHT_*` di env.
 
-## 8. Invitation → Deal state machine
+---
+
+## 9. Deal state machine
 
 ```
 Invitation: PENDING → ACCEPTED | REJECTED | EXPIRED
@@ -242,141 +261,62 @@ Deal:
   IN_PROGRESS → COMPLETED | CANCELLED
 ```
 
-Sebelum `COMPLETED`: fraud checks dapat memblokir.
-
-## 9. Keamanan
-
-- Mutasi data: `requireAuth` (token Supabase)
-- Cek kepemilikan Party / Opportunity / Deal
-- Role ADMIN untuk review dokumen
-- Upload max 10MB
-- Rate limit global HTTP
-
-## 10. Daftar Modul MVP yang Wajib Diselesaikan (Roadmap Pengembangan)
-
-Berikut adalah modul-modul MVP prioritas yang wajib diselesaikan pada tahap pengembangan berikutnya agar platform siap diluncurkan secara komersial dan operasional:
-
-### 🚀 Prioritas 1: Komunikasi & Kebijakan Chat (FR-16 & FR-17)
-*Tujuan: Membuka potensi interaksi antar pebisnis tanpa friksi berlebih namun tetap terlindungi dari spam.*
-- [x] **1.1 Relaksasi Kebijakan Chat (`chat.policy.js`)**:
-  - Mengizinkan chat langsung dari konteks Opportunity (`originType: NEED` atau `OFFER` dengan `opportunityId` valid) **tanpa kewajiban membership**.
-  - Mengizinkan kelanjutan percakapan (reply pesan) pada percakapan yang sudah ada untuk semua user.
-  - Mempertahankan pembatasan selektif untuk *Cold DM* (`originType: PROFILE` tanpa kartu opportunity).
-- [ ] **1.2 Proteksi Anti-Spam & Rate Limiting Chat**:
-  - Batasan pembuatan percakapan baru per hari (maks. 5 conversation baru/hari untuk non-member, 30/hari untuk member).
-  - Limit pesan bertubi-tubi sebelum ada balasan pertama dari penerima (maks. 20 pesan/jam).
-  - Integrasi fitur Report/Block user yang mengganggu langsung dari chat room.
-- [x] **1.3 Pemisahan Alur Chat vs Invitation Formal (FR-17)**:
-  - User dapat chat langsung dari kartu Opportunity tanpa harus menunggu Invitation di-accept.
-  - Invitation tetap berfungsi khusus sebagai pintu formal menuju pembuatan `Deal (NEGOTIATION)`.
-  - Sinkronisasi teks/seed FAQ agar tidak lagi menyebutkan bahwa chat memerlukan membership penerima.
+Sebelum `COMPLETED`: `runFraudChecks` dapat memblokir (409) atau mencatat `FraudFlag`.
 
 ---
 
-### 💳 Prioritas 2: Monetisasi & Payment Gateway
-*Tujuan: Mengotomatisasi proses pembayaran langganan Membership dan paket Opportunity Boost.*
-- [ ] **2.1 Integrasi Payment Gateway (Midtrans / Xendit)**:
-  - Implementasi alur checkout pembayaran untuk **Paket Membership** (Bulanan/Tahunan) dan **Paket Boost** (Basic/Premium/VIP).
-  - Penanganan webhook notifikasi pembayaran dengan verifikasi signature & handling idempotency (`idempotencyKey`).
-- [ ] **2.2 Siklus Transaksi & Aktivasi Otomatis**:
-  - Otomatis mengubah status membership/boost menjadi `ACTIVE` seketika pembayaran sukses.
-  - Penanganan status pembayaran kadaluarsa (`EXPIRED`) atau dibatalkan (`CANCELLED`).
-  - Pencatatan log invoice dan histori transaksi di level Profile/Party.
+## 10. Keamanan
+
+| Kontrol | Detail |
+|---------|--------|
+| Auth | Supabase JWT + `requireAuth` / `requireVerifiedSession` |
+| RBAC | `requireRole('ADMIN')` |
+| CORS | Whitelist origin (`ALLOWED_ORIGINS` / `CLIENT_URL`) |
+| Input | Zod di route sensitif |
+| Upload | Multer + Cloudinary, batas ukuran |
+| Rate limit global | 300 / 15 menit (default) |
+| Rate limit intent | 40 / 15 menit |
+| Rate limit webhook | 120 / menit |
+| Rate limit report | 10 / jam + max 1 PENDING/target/hari |
+| Chat anti-spam | Conv baru/hari + unreplied burst |
+| Payment webhook | Signature + amount + atomic claim |
+| Account | Suspend/ban ditegakkan di auth middleware |
+
+Env throttle (opsional): `THROTTLE_MAX`, `THROTTLE_INTENT_MAX`, `THROTTLE_WEBHOOK_MAX`,
+`CHAT_NEW_CONV_MAX_FREE`, `CHAT_NEW_CONV_MAX_MEMBER`, `CHAT_UNREPLIED_BURST_MAX`.
 
 ---
 
-### 🔔 Prioritas 3: Multi-Channel Notifications (FR-12)
-*Tujuan: Memastikan user tidak melewatkan match penting, pesan masuk, atau penawaran deal saat sedang offline.*
-- [ ] **3.1 External Notification Dispatcher (Email & WhatsApp)**:
-  - Integrasi provider email transaksional (Resend / SendGrid / SMTP).
-  - Integrasi gateway WhatsApp bisnis (Fonnte / Twilio / Waba) untuk alert instan.
-- [ ] **3.2 Trigger Event Notifikasi Kritis**:
-  - Notifikasi saat menerima **Invitation baru** atau **Deal status update**.
-  - Notifikasi pesan chat baru jika user penerima sedang offline/tidak membuka WebSocket selama >5 menit.
-  - Pengingat masa aktif membership (H-3 dan H-1 sebelum membership berakhir).
-  - Notifikasi hasil review verifikasi dokumen oleh admin (Approved/Rejected).
+## 11. Roadmap pasca-MVP (backend)
+
+### Selesai di kode MVP
+- [x] Chat policy FR-16 / FR-17 + anti-spam + report dari room
+- [x] Midtrans Membership + Boost (adapter, webhook aman)
+- [x] Admin API + CMS + reports
+- [x] Fraud detection rule-based + review endpoint
+
+### Go-live checklist (ops)
+- [ ] Production `DATABASE_URL` / `DIRECT_URL` sehat → `GET /api/v1/health` = 200
+- [ ] `MIDTRANS_*` production + notification URL
+- [ ] Seed + publish halaman **Syarat & Ketentuan** / **Privasi**
+- [ ] Cron Hostinger path version aktif
+- [ ] (Opsional) Google OAuth Supabase
+
+### Backlog produk
+- [ ] Notifikasi Email / WhatsApp (FR-12) — mailer skeleton sudah ada
+- [ ] Escrow payout + dispute mediation penuh
+- [ ] Optimasi matching skala besar
+- [ ] Integration / E2E tests
 
 ---
 
-### 🛡️ Prioritas 4: Escrow & Pending Transaction Protection (Rekber / Perlindungan Transaksi B2B)
-*Tujuan: Menjamin keamanan transaksi antar pihak yang belum saling kenal dengan menahan dana pembeli hingga pekerjaan/barang selesai diserahterimakan.*
+## 12. Background jobs
 
-#### A. Alur Arsitektur & Siklus Hidup Transaksi (State Machine)
-```
-[Buyer & Seller Sepakat Deal]
-             │
-             ▼
-[1. Buat Kontrak Transaksi Escrow] ───► Total Nilai Deal + Fee Platform
-             │
-             ▼
-[2. Buyer Bayar ke Virtual Account Escrow] (Payment Gateway Midtrans/Xendit)
-             │
-             ▼
-[Dana Masuk & Status: FUNDS_HELD] ───► Seller Notified "Dana Aman, Mulai Eksekusi"
-             │
-             ▼
-[3. Seller Kirim Barang / Selesaikan Jasa] ───► Upload Resi / Bukti Serah Terima (DELIVERED)
-             │
-             ▼
-[4. Buyer Review Hasil] ─── (Batas Waktu Auto-Release: 3-7 Hari)
-             │
-     ┌───────┴────────────────────────┐
-     ▼                                ▼
-[Buyer Approve]                [Buyer Ajukan Komplain]
-     │                                │
-     ▼                                ▼
-[5. Dana Dicairkan (RELEASED)]  [Status: DISPUTED]
-  • Fee Platform dipotong          • Admin Mediator Masuk
-  • Dana Payout ke Seller          • Mediasi / Refund / Partial Release
-```
-
-#### B. Rincian Status Escrow (Status Lifecycle)
-1. **`AWAITING_PAYMENT`**: Kontrak escrow terbuat, invoice/VA diterbitkan, menunggu pembayaran buyer.
-2. **`FUNDS_HELD`**: Pembayaran terverifikasi gateway, dana tertahan di rekening penampung aman, seller mulai bekerja.
-3. **`IN_PROGRESS / DELIVERED`**: Seller menandai pekerjaan selesai / barang terkirim beserta bukti serah terima.
-4. **`RELEASED / COMPLETED`**: Buyer menyetujui hasil, dana diteruskan ke saldo/rekening seller setelah dipotong fee platform.
-5. **`AUTO_RELEASED`**: Dana otomatis cair ke seller jika buyer tidak memberikan konfirmasi/komplain dalam batas waktu perlindungan (misal 5 hari).
-6. **`DISPUTED`**: Sengketa dibuka jika barang/jasa cacat atau tidak sesuai; dana dibekukan sementara menunggu keputusan mediator admin.
-7. **`REFUNDED / PARTIAL_REFUNDED`**: Dana dikembalikan sebagian atau penuh ke buyer berdasarkan keputusan sengketa.
-
-#### C. Checklist Modul Escrow:
-- [ ] **4.1 Skema Data Escrow Contract & Milestone (`prisma/schema.prisma`)**:
-  - Model `EscrowTransaction`, `EscrowMilestone`, `EscrowDispute`, dan `EscrowPayoutAccount`.
-- [ ] **4.2 Service Layer & State Engine (`escrow.service.js`)**:
-  - Validasi transisi state, perhitungan *platform fee*, dan pencegahan *double-release*.
-- [ ] **4.3 Dispute & Admin Mediation System**:
-  - Endpoint pengajuan sengketa beserta unggah bukti percakapan/foto kondisi barang.
-  - Endpoint keputusan admin untuk mediasi (*Release to Seller*, *Full Refund to Buyer*, atau *Partial Split*).
-- [ ] **4.4 Auto-Release Cron Worker (`autoReleaseEscrow.job.js`)**:
-  - Background job otomatis merilis dana transaksi berstatus `DELIVERED` yang melampaui batas waktu review.
-- [ ] **4.5 Payout / Disbursement Integration**:
-  - Penyaluran dana aman (*Disbursement*) ke rekening bank/e-wallet seller setelah deal sukses.
+CLI + `scheduler.js` sudah ada. Di Hostinger pasang cron sesuai **`docs/deployment-guide.md`**
+(path `hbuilds/versions/...` berubah tiap redeploy — update cron).
 
 ---
 
-### ⚖️ Prioritas 5: Admin Moderasi & Fraud Review API (FR-13)
-*Tujuan: Memberikan kendali penuh bagi tim operasional untuk memverifikasi dokumen bisnis dan menangani indikasi fraud.*
-- [ ] **5.1 Verifikasi Dokumen Legal Bisnis (FR-02)**:
-  - Endpoint list pengajuan dokumen verifikasi yang berstatus `PENDING`.
-  - Aksi verifikasi: `APPROVE` (memberikan badge & poin reputasi) atau `REJECT` (dengan alasan spesifik).
-- [ ] **5.2 Dashboard Moderasi & FraudFlag (FR-10)**:
-  - Endpoint daftar `FraudFlag` (`PENDING_REVIEW`) yang terdeteksi otomatis oleh Fraud Engine.
-  - Aksi penanganan fraud: `CONFIRMED` (blokir deal/suspend party) atau `DISMISSED` (abaikan jika false positive).
-  - Endpoint suspend/ban user atau party yang melanggar ketentuan platform.
+## Lisensi & kontribusi
 
----
-
-### 🔍 Prioritas 6: Matching Engine Self-Match Prevention & Optimasi
-*Tujuan: Menghindari circular matching dan meningkatkan relevansi penemuan mitra bisnis.*
-- [x] **6.1 Pencegahan Self-Match Total**:
-  - Memastikan pencarian matching mengecualikan opportunity milik Profile yang sama, meskipun dibuat menggunakan Party bisnis yang berbeda.
-- [ ] **6.2 Penyempurnaan Filter & Kategori**:
-  - Penyelarasan kategori induk dan sub-kategori pada algoritma scoring.
-  - Optimasi query matching untuk menangani volume data yang lebih besar secara efisien.
-
----
-
-## 11. Background Jobs & Scheduler
-
-Scheduler opportunity/invitation/membership: **sudah ada** (CLI + `scheduler.js`); di shared host pasang **cron** sesuai `docs/deployment-guide.md`.
-
+Lihat `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.

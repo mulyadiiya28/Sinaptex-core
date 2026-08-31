@@ -5,13 +5,12 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { toSkipTake, buildMeta } = require('../../shared/pagination');
 const logger = require('../../core/logger');
 const adminService = require('./admin.service');
+const chatRateLimitPolicy = require('../chat/chatRateLimitPolicy.service');
 
 const getDashboard = asyncHandler(async (req, res) => {
   const stats = await adminService.getDashboardStats();
   return success(res, stats);
 });
-
-// ---------- Users ----------
 
 const listUsers = asyncHandler(async (req, res) => {
   const { search, accountStatus, page, limit } = req.query;
@@ -68,8 +67,6 @@ const suspendUser = asyncHandler(async (req, res) => {
   return success(res, updated, `Account status updated to ${accountStatus}`);
 });
 
-// ---------- Opportunity moderation ----------
-
 const listOpportunitiesForModeration = asyncHandler(async (req, res) => {
   const { status, page, limit } = req.query;
   const where = status ? { status } : {};
@@ -86,16 +83,15 @@ const listOpportunitiesForModeration = asyncHandler(async (req, res) => {
   return success(res, items, 'OK', 200, buildMeta({ page, limit, total }));
 });
 
-/**
- * Admin bisa paksa ubah status Opportunity siapa pun (mis. CLOSED karena
- * melanggar) — beda dari `PATCH /opportunities/:id` biasa yang cuma untuk pemilik.
- */
 const forceUpdateOpportunityStatus = asyncHandler(async (req, res) => {
   const { status, moderationNote } = req.body;
   const opportunity = await prisma.opportunity.findUnique({ where: { id: req.params.id } });
   if (!opportunity) throw ApiError.notFound('Opportunity not found');
 
-  const updated = await prisma.opportunity.update({ where: { id: req.params.id }, data: { status } });
+  const updated = await prisma.opportunity.update({
+    where: { id: req.params.id },
+    data: { status },
+  });
 
   if (moderationNote) {
     logger.info('Admin moderated opportunity', {
@@ -108,8 +104,6 @@ const forceUpdateOpportunityStatus = asyncHandler(async (req, res) => {
 
   return success(res, updated, 'Opportunity status updated by admin');
 });
-
-// ---------- Review moderation ----------
 
 const listReviewsForModeration = asyncHandler(async (req, res) => {
   const { hidden, page, limit } = req.query;
@@ -142,8 +136,6 @@ const setReviewVisibility = asyncHandler(async (req, res) => {
   return success(res, updated, hidden ? 'Review hidden' : 'Review restored');
 });
 
-// ---------- User reports ----------
-
 const listReports = asyncHandler(async (req, res) => {
   const { status, page, limit } = req.query;
   const where = status ? { status } : {};
@@ -170,12 +162,15 @@ const reviewReport = asyncHandler(async (req, res) => {
 
   const updated = await prisma.userReport.update({
     where: { id: report.id },
-    data: { status, adminNote, reviewedBy: req.profile.id, reviewedAt: new Date() },
+    data: {
+      status,
+      adminNote,
+      reviewedBy: req.profile.id,
+      reviewedAt: new Date(),
+    },
   });
   return success(res, updated, 'Report reviewed');
 });
-
-// ---------- Membership transactions overview (lintas semua user) ----------
 
 const listTransactions = asyncHandler(async (req, res) => {
   const { status, page, limit } = req.query;
@@ -186,7 +181,9 @@ const listTransactions = asyncHandler(async (req, res) => {
       where,
       include: {
         plan: true,
-        membership: { include: { profile: { select: { id: true, fullName: true } } } },
+        membership: {
+          include: { profile: { select: { id: true, fullName: true } } },
+        },
       },
       orderBy: { createdAt: 'desc' },
       ...toSkipTake({ page, limit }),
@@ -194,6 +191,29 @@ const listTransactions = asyncHandler(async (req, res) => {
     prisma.membershipTransaction.count({ where }),
   ]);
   return success(res, items, 'OK', 200, buildMeta({ page, limit, total }));
+});
+
+/** GET /admin/settings/chat-rate-limit */
+const getChatRateLimitSettings = asyncHandler(async (req, res) => {
+  const policy = await chatRateLimitPolicy.getPolicy();
+  return success(res, {
+    policy,
+    envDefaults: chatRateLimitPolicy.DEFAULTS,
+  });
+});
+
+/** PATCH /admin/settings/chat-rate-limit */
+const updateChatRateLimitSettings = asyncHandler(async (req, res) => {
+  try {
+    const updated = await chatRateLimitPolicy.updatePolicy(req.body, req.profile.id);
+    logger.info('Admin updated chat rate limit policy', {
+      adminId: req.profile.id,
+      policy: updated,
+    });
+    return success(res, updated, 'Chat rate limit policy updated');
+  } catch (err) {
+    throw ApiError.badRequest(err.message || 'Invalid chat rate limit policy');
+  }
 });
 
 module.exports = {
@@ -208,4 +228,6 @@ module.exports = {
   listReports,
   reviewReport,
   listTransactions,
+  getChatRateLimitSettings,
+  updateChatRateLimitSettings,
 };

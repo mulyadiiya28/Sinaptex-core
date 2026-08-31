@@ -1,19 +1,15 @@
 const Redis = require('ioredis');
 const prisma = require('../../config/prisma');
 const redisConfig = require('../../config/redis.config');
-const throttleConfig = require('../../config/throttle.config');
 const membershipService = require('../membership/membership.service');
+const chatRateLimitPolicy = require('./chatRateLimitPolicy.service');
 const ApiError = require('../../utils/apiError');
 const ErrorCodes = require('../../utils/errorCodes');
 const logger = require('../../core/logger');
 
 /**
  * Chat rate limit (FR-16) — Redis primary, Prisma fallback.
- *
- * 1) Conversation BARU / hari (Asia/Jakarta):
- *    non-member max 5, member max 30 (override via env).
- * 2) Unreplied burst: max N pesan dari satu pihak sebelum lawan membalas,
- *    di dalam window 1 jam (Prisma-only — akurat & volume rendah).
+ * Limit diambil dari chatRateLimitPolicy (DB admin-editable, fallback env).
  */
 
 let redisClient = null;
@@ -26,7 +22,6 @@ function getRedis() {
       process.env.REDIS_URL && process.env.REDIS_URL !== 'redis://localhost:6379'
     );
     const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
-    // Di test / tanpa REDIS_URL eksplisit: skip Redis, pakai Prisma fallback
     if (!hasExplicitRedis || isTest) {
       redisUnavailable = true;
       return null;
@@ -58,17 +53,14 @@ function getRedis() {
   return redisClient;
 }
 
-/** YYYY-MM-DD di zona Asia/Jakarta (UTC+7). */
 function jakartaDayKey(date = new Date()) {
   const offsetMs = 7 * 60 * 60 * 1000;
   const local = new Date(date.getTime() + offsetMs);
   return local.toISOString().slice(0, 10);
 }
 
-/** Awal hari Asia/Jakarta sebagai Date UTC. */
 function startOfJakartaDay(date = new Date()) {
   const day = jakartaDayKey(date);
-  // 00:00 WIB = 17:00 UTC hari sebelumnya
   return new Date(`${day}T00:00:00+07:00`);
 }
 
@@ -103,11 +95,6 @@ async function redisIncr(key, ttlSeconds) {
   }
 }
 
-/**
- * Hitung conversation yang melibatkan profile hari ini (Prisma fallback).
- * Catatan: ikut menghitung conversation yang dibuka orang lain ke user ini.
- * Cukup untuk anti-spam; Redis lebih akurat karena hanya INCR di jalur initiator.
- */
 async function countConversationsTodayDb(profileId) {
   const since = startOfJakartaDay();
   return prisma.conversation.count({
@@ -120,17 +107,14 @@ async function countConversationsTodayDb(profileId) {
 
 async function getNewConversationLimit(profileId) {
   const isMember = await membershipService.hasActiveMembership(profileId);
-  const { maxFree, maxMember } = throttleConfig.chat.newConversation;
+  const policy = await chatRateLimitPolicy.getPolicy();
   return {
-    max: isMember ? maxMember : maxFree,
+    max: isMember ? policy.maxNewConvMember : policy.maxNewConvFree,
     isMember,
+    policy,
   };
 }
 
-/**
- * Cek (tanpa increment) apakah masih boleh membuat conversation baru.
- * Dipanggil SEBELUM create.
- */
 async function assertCanCreateConversation(profileId) {
   const { max, isMember } = await getNewConversationLimit(profileId);
   const key = newConversationRedisKey(profileId);
@@ -152,16 +136,11 @@ async function assertCanCreateConversation(profileId) {
   return { used, max, isMember };
 }
 
-/**
- * Increment counter setelah conversation baru berhasil dibuat.
- * Aman dipanggil walau Redis down (no-op → counter DB tetap akurat di assert berikutnya).
- */
 async function recordNewConversation(profileId) {
-  const { redisTtlSeconds } = throttleConfig.chat.newConversation;
+  const policy = await chatRateLimitPolicy.getPolicy();
   const key = newConversationRedisKey(profileId);
-  const count = await redisIncr(key, redisTtlSeconds);
+  const count = await redisIncr(key, policy.redisTtlSeconds);
   if (count === null) {
-    // Prisma fallback tidak perlu write — count dihitung dari createdAt
     logger.debug('Chat rate-limit: Redis incr skipped, DB fallback active', { profileId });
   }
   return count;
@@ -175,12 +154,10 @@ function secondsUntilJakartaMidnight() {
   return Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1000));
 }
 
-/**
- * Anti spray: batasi pesan pengirim sebelum lawan membalas, dalam window 1 jam.
- * Hanya memakai Prisma (akurat, tidak bergantung Redis).
- */
 async function assertUnrepliedBurst(conversationId, senderId) {
-  const { windowMs, max } = throttleConfig.chat.unrepliedBurst;
+  const policy = await chatRateLimitPolicy.getPolicy();
+  const windowMs = policy.unrepliedBurstWindowMs;
+  const max = policy.unrepliedBurstMax;
 
   const lastFromOther = await prisma.message.findFirst({
     where: { conversationId, senderId: { not: senderId } },
@@ -190,7 +167,6 @@ async function assertUnrepliedBurst(conversationId, senderId) {
 
   const windowStart = new Date(Date.now() - windowMs);
   const afterOther = lastFromOther?.createdAt || new Date(0);
-  // Hitung pesan pengirim SETELAH balasan terakhir lawan, dan masih dalam window 1 jam
   const lowerBound = afterOther > windowStart ? afterOther : windowStart;
 
   const count = await prisma.message.count({
@@ -203,7 +179,7 @@ async function assertUnrepliedBurst(conversationId, senderId) {
 
   if (count >= max) {
     throw ApiError.tooManyRequests(
-      `Terlalu banyak pesan sebelum ada balasan (maks ${max}/jam). Tunggu lawan membalas.`,
+      `Terlalu banyak pesan sebelum ada balasan (maks ${max} dalam window). Tunggu lawan membalas.`,
       { used: count, max, retryAfterSeconds: Math.ceil(windowMs / 1000) },
       ErrorCodes.RATE_LIMITED
     );
@@ -216,7 +192,6 @@ module.exports = {
   assertCanCreateConversation,
   recordNewConversation,
   assertUnrepliedBurst,
-  // exported for unit tests
   jakartaDayKey,
   startOfJakartaDay,
   newConversationRedisKey,

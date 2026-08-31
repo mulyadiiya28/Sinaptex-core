@@ -6,8 +6,13 @@ RUN apk add --no-cache openssl libc6-compat
 # ---- Dependencies ----
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && cp -R node_modules /tmp/prod_node_modules
-RUN npm ci
+# Prefer npm ci when lockfile exists; fall back to install (no lockfile in repo yet)
+RUN if [ -f package-lock.json ]; then \
+      npm ci --omit=dev && cp -R node_modules /tmp/prod_node_modules && npm ci; \
+    else \
+      npm install --omit=dev --legacy-peer-deps && cp -R node_modules /tmp/prod_node_modules && \
+      npm install --legacy-peer-deps; \
+    fi
 
 # ---- Build (prisma generate needs full deps) ----
 FROM base AS build

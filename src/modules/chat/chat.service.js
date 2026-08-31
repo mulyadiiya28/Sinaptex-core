@@ -2,6 +2,7 @@ const prisma = require('../../config/prisma');
 const ApiError = require('../../utils/apiError');
 const ErrorCodes = require('../../utils/errorCodes');
 const chatPolicy = require('./chat.policy');
+const chatRateLimit = require('./chat.rateLimit');
 const { eventBus, EVENTS } = require('../../core/eventBus');
 
 /**
@@ -14,6 +15,8 @@ const { eventBus, EVENTS } = require('../../core/eventBus');
  *
  * Participant list TIDAK lagi kolom hardcode di Conversation — selalu lewat
  * ConversationParticipant, supaya siap dipakai group chat nanti tanpa migrasi.
+ *
+ * Rate limit (FR-16): conversation baru / hari + unreplied burst — chat.rateLimit.js
  */
 
 /** Cari Conversation 1:1 yang sudah ada antara 2 Profile (kalau ada). */
@@ -64,6 +67,7 @@ async function assertParticipant(conversationId, profileId) {
 /**
  * Ambil Conversation yang sudah ada antara 2 Profile, atau buat baru kalau
  * belum ada — gating (lewat ConversationPolicy) HANYA berlaku saat membuat baru.
+ * Rate limit conversation baru juga HANYA saat isNew.
  */
 async function getOrStartConversation({
   myProfileId,
@@ -86,6 +90,9 @@ async function getOrStartConversation({
     originType,
   });
 
+  // FR-16: batas conversation baru per hari (Redis + Prisma fallback)
+  await chatRateLimit.assertCanCreateConversation(myProfileId);
+
   const conversation = await prisma.conversation.create({
     data: {
       originType,
@@ -95,6 +102,9 @@ async function getOrStartConversation({
       },
     },
   });
+
+  await chatRateLimit.recordNewConversation(myProfileId);
+
   return { conversation, isNew: true };
 }
 
@@ -179,6 +189,9 @@ async function sendMessage({
       ErrorCodes.VALIDATION_ERROR
     );
   }
+
+  // FR-16: anti spray — batasi pesan sebelum lawan membalas (REST + WebSocket)
+  await chatRateLimit.assertUnrepliedBurst(conversationId, senderId);
 
   const message = await prisma.message.create({
     data: { conversationId, senderId, type, content, mediaUrl, mediaName },

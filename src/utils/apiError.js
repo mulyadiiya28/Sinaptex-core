@@ -20,6 +20,7 @@ class ApiError extends Error {
       403: ErrorCodes.FORBIDDEN,
       404: ErrorCodes.NOT_FOUND,
       409: ErrorCodes.CONFLICT,
+      429: ErrorCodes.RATE_LIMITED,
       500: ErrorCodes.INTERNAL_ERROR,
     };
     return map[statusCode] || ErrorCodes.INTERNAL_ERROR;
@@ -47,6 +48,10 @@ class ApiError extends Error {
 
   static conflict(message = 'Conflict', details = null, code = null) {
     return new ApiError(409, message, details, code);
+  }
+
+  static tooManyRequests(message = 'Too many requests', details = null, code = null) {
+    return new ApiError(429, message, details, code || ErrorCodes.RATE_LIMITED);
   }
 
   static internal(message = 'Internal server error', code = null) {

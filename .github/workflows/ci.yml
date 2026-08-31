@@ -27,10 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Generate Prisma Client
         run: npx prisma generate
@@ -43,8 +42,6 @@ jobs:
         env:
           NODE_ENV: test
           REDIS_URL: redis://localhost:6379
-          # Dummy values so config/env.js doesn't warn loudly in CI logs; unit tests
-          # in tests/unit/ are pure-function tests and don't hit the real DB/Supabase/Cloudinary.
           DATABASE_URL: postgresql://user:pass@localhost:5432/db
           DIRECT_URL: postgresql://user:pass@localhost:5432/db
           SUPABASE_URL: https://example.supabase.co

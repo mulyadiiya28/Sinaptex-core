@@ -5,9 +5,7 @@ const logger = require('./logger');
  * Database Utility Service (Prisma Client Singleton)
  *
  * Implements a strict singleton pattern across Node.js runtime and serverless execution contexts
- * (AWS Lambda, Google Cloud Functions, Cloud Run, Vercel, etc.) to prevent connection exhaustion.
- *
- * Provides connection lifecycle hooks, ping/health-check utilities, and safe disconnection handlers.
+ * to prevent connection exhaustion.
  */
 
 const globalForPrisma = globalThis;
@@ -77,35 +75,29 @@ function createPrismaClientInstance() {
 
     return client;
   } catch (err) {
-    logger.warn('[DatabaseService] Failed to initialize native PrismaClient, activating fallback proxy:', err.message);
+    logger.error('[DatabaseService] PrismaClient initialization failed.', err);
+
+    if (env.nodeEnv === 'production') {
+      throw err;
+    }
+
+    logger.warn('[DatabaseService] Using fallback proxy in development only.');
     return createFallbackProxy();
   }
 }
 
-/**
- * Returns the Singleton PrismaClient instance.
- * Reuses the existing client instance if already initialized in the current process or serverless container.
- *
- * @returns {import('@prisma/client').PrismaClient}
- */
 function getPrismaClient() {
   if (!prismaInstance) {
     if (globalForPrisma.prisma) {
       prismaInstance = globalForPrisma.prisma;
     } else {
       prismaInstance = createPrismaClientInstance();
-      // Store in globalThis to reuse connections across hot-reloads and warm serverless invocations
       globalForPrisma.prisma = prismaInstance;
     }
   }
   return prismaInstance;
 }
 
-/**
- * Health check utility to test connectivity to the underlying database.
- *
- * @returns {Promise<{ ok: boolean, latencyMs: number, error?: string }>}
- */
 async function checkDatabaseHealth() {
   const client = getPrismaClient();
   const startTime = Date.now();
@@ -119,10 +111,6 @@ async function checkDatabaseHealth() {
   }
 }
 
-/**
- * Gracefully disconnects the Prisma Client instance.
- * Useful during server shutdown or container termination.
- */
 async function disconnectDatabase() {
   if (prismaInstance && typeof prismaInstance.$disconnect === 'function') {
     try {
@@ -134,7 +122,6 @@ async function disconnectDatabase() {
   }
 }
 
-// Initialize and export singleton instance directly, along with helper utilities
 const prisma = getPrismaClient();
 
 module.exports = {

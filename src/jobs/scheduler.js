@@ -15,6 +15,7 @@ const recomputeAllPartyStats = require('./recomputePartyStats.job');
 const cleanupNotifications = require('./cleanupNotifications.job');
 const fraudScan = require('./fraudScan.job');
 const expireMemberships = require('./expireMemberships.job');
+const databaseBackup = require('./databaseBackup.job');
 
 function schedule(name, cronExpr, task) {
   cron.schedule(
@@ -38,5 +39,6 @@ schedule('recomputePartyStats', schedulerConfig.jobs.recomputePartyStats, recomp
 schedule('cleanupNotifications', schedulerConfig.jobs.cleanupNotifications, cleanupNotifications);
 schedule('fraudScan', schedulerConfig.jobs.fraudScan, fraudScan);
 schedule('expireMemberships', schedulerConfig.jobs.expireMemberships, expireMemberships);
+schedule('databaseBackup', schedulerConfig.jobs.weeklyDatabaseBackup, databaseBackup);
 
 logger.info('Scheduler process started');

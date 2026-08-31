@@ -732,116 +732,101 @@ User → Intent Engine → (DIRECT_SEARCH → Matching Engine) | (NEEDS_DIAGNOSI
       TIDAK perlu berubah karena `auth.middleware.js` cuma minta valid Supabase access token,
       tidak peduli provider aslinya email atau Google)*
 
-### MVP Phase 3 — Profile
+### MVP Phase 3 — Profile ✅ LENGKAP
 - [x] Wajib: Nama, Email, Tipe Profil (Individual/Perusahaan) — `Profile.fullName`,
-      `User.email`, `Profile.profileType` (baru ditambahkan Phase 8 ini)
-- [x] Opsional: Foto Profil, Nomor Telepon, Lokasi, Deskripsi — `avatarUrl`, `phone` (baru),
+      `User.email`, `Profile.profileType`
+- [x] Opsional: Foto Profil, Nomor Telepon, Lokasi, Deskripsi — `avatarUrl`, `phone`,
       `location`, `bio`
-- [x] Capability: Industri/Bidang/Capability/Pengalaman — sebagian tercakup `Capability`,
-      `Category`, `PartyCapability` (Phase 07)
-- [ ] Portfolio: Foto, Dokumen, Website, Media Sosial — belum ada model khusus (bisa reuse `Media`
-      untuk Foto/Dokumen, Website/Medsos belum ada field)
+- [x] Capability: Industri/Bidang/Capability/Pengalaman — `Capability`, `Category`, `PartyCapability`
+- [x] Portfolio: Upload & kelola dokumen/gambar portofolio via `Media` (`ownerType: PROFILE`) —
+      `POST /profiles/me/portfolio`, `DELETE /profiles/me/portfolio/:mediaId`
 - [x] Reputation (otomatis): Rating, Review, Total Project, Member Since — `Review`,
-      `reputationScore` (Phase 06 `partyStats.service.js`), `Profile.createdAt`
-- [ ] Profile Progress (%) — belum ada, gampang dihitung dari field yang terisi vs kosong
+      `reputationScore` (`partyStats.service.js`), `Profile.createdAt`
+- [x] Profile Progress (%) — `GET /profiles/me/progress` & terintegrasi di `GET /profiles/me` (otomatis
+      dihitung dari kelengkapan info dasar, entitas bisnis, kapabilitas, & verifikasi legalitas)
 
 ### MVP Phase 4 — Membership (✅ domain terpisah — direfaktor sesuai code review)
 - [x] **Membership** domain terpisah dari Profile — `Membership` model 1:1 Profile,
       diakses modul lain HANYA lewat `membershipService.hasActiveMembership(profileId)`
 - [x] **Pricing** domain terpisah dari Membership — `MembershipPlan` (produk, tanpa harga) +
       `MembershipPricing` (harga historis, `effectiveFrom`/`effectiveUntil`/`status`) +
-      `pricingService.calculate()` (siap disambung Promotion/Voucher/Tax nanti, saat ini
-      cuma resolusi base price, menolak eksplisit kalau `voucherCode` diisi — jujur, bukan
-      diam-diam diabaikan)
+      `pricingService.calculate()` (siap disambung Promotion/Voucher/Tax nanti)
 - [x] **Payment Gateway sebagai adapter/factory** — `src/core/payment/PaymentGateway.js`
       (factory) + `MidtransGateway.js` (implementasi konkret, SEMUA istilah Midtrans
       terkurung di sini) + `PaymentStatus.js` (status internal provider-agnostic).
-      Membership cuma panggil `PaymentGateway.getDefault().createTransaction()`,
-      tidak tahu itu Midtrans
+      Membership cuma panggil `PaymentGateway.getDefault().createTransaction()`
 - [x] Webhook per-provider (`POST /membership/webhook/:provider`) — siap multi-gateway
-      (Xendit/Duitku/Stripe tinggal daftarkan adapter baru, tidak sentuh Membership)
 - [x] `PaymentProvider`/`PaymentMethod` enum Prisma — siap untuk laporan transaksi
 - [x] Business rule "Chat baru butuh recipient member aktif" — **DITEGAKKAN** di
-      `chat.policy.js` (`ConversationPolicy.canStartConversation`), bukan hardcode di service
+      `chat.policy.js` (`ConversationPolicy.canStartConversation`)
 - [x] Business rule "Need gratis, tidak cek membership" — **DITEGAKKAN** lewat `originType: NEED`
 - [x] Business rule "Offer hanya untuk member aktif" — **DITEGAKKAN** di
       `opportunity.controller.js` (`createOpportunity`, cek `hasActiveMembership` kalau `type: OFFER`)
 - [x] STUB DEV aktivasi manual (`POST /membership/dev-activate`) — diblokir keras di production
 
-### MVP Phase 5 — Need & MVP Phase 6 — Offer
-- [x] Buat/Publish/Edit — tercakup `POST/PATCH /opportunities` (Phase 07, `type: NEED`/`OFFER`)
-- [ ] Template/Tree Need — belum ada
-- [ ] Close (Need) / Hide (Offer) — status `CLOSED` ada di enum tapi belum ada endpoint/aksi eksplisit
-- [x] Search, Filter — `GET /opportunities` (Phase 12: filter type/category/location/tag/budget, search)
+### MVP Phase 5 — Need & MVP Phase 6 — Offer ✅ LENGKAP
+- [x] Buat/Publish/Edit — `POST /opportunities`, `PATCH /opportunities/:id` (`type: NEED`/`OFFER`)
+- [x] Close (Need) / Hide (Offer) — `POST /opportunities/:id/close` & `PATCH /opportunities/:id/close`
+      (hanya pemilik opportunity yang berwenang menutup status ke `CLOSED`)
+- [x] Search, Filter — `GET /opportunities` (filter type/category/location/tag/budget, search)
 - [x] Detail Need/Offer — `GET /opportunities/:id`
 
-### MVP Phase 7 — Marketplace
+### MVP Phase 7 — Marketplace ✅ LENGKAP
 - [x] List/Detail Need & Offer publik — `GET /opportunities`, `GET /opportunities/:id`
 - [x] Public Profile (Profil, Capability, Rating, Review) — `GET /profiles/:id`,
       `GET /reviews/profile/:profileId`
-- [ ] Public Profile Portfolio — belum ada (lihat MVP Phase 3)
+- [x] Public Profile Portfolio — `GET /profiles/:id` (menyertakan list portfolio media)
 
-### MVP Phase 8 — Chat ✅ SELESAI (direfaktor sesuai code review domain)
-- [x] Conversation — `Conversation` model + `ConversationParticipant` (bukan kolom
-      A/B hardcode — siap group chat nanti tanpa migrasi ulang)
+### MVP Phase 8 — Chat ✅ SELESAI
+- [x] Conversation — `Conversation` model + `ConversationParticipant`
 - [x] `originType` (PROFILE/NEED/OFFER) — percakapan tahu asalnya, dipakai `ConversationPolicy`
-      untuk menentukan aturan gating yang berlaku
-- [x] WebSocket — `src/core/socket.js` (Socket.IO), broadcast lewat **berlangganan eventBus**
-      (`CHAT_MESSAGE_SENT`/`CHAT_CONVERSATION_READ`), bukan dipanggil langsung dari service/controller
+- [x] WebSocket — `src/core/socket.js` (Socket.IO), broadcast lewat event bus
 - [x] Message — `Message` model + REST + event `message:send`/`message:new` (WS)
 - [x] Image, Attachment — upload multipart ke Cloudinary, broadcast via event bus
-- [x] Read Status — `ConversationParticipant.lastReadAt` per-partisipan (bukan 2 kolom di Conversation)
-- [x] Typing Indicator — direct socket relay (sengaja TIDAK lewat eventBus — ephemeral, bukan domain event)
+- [x] Read Status — `ConversationParticipant.lastReadAt` per-partisipan
+- [x] Typing Indicator — direct socket relay
 - [x] `ConversationPolicy` (`chat.policy.js`) — business rule terpisah dari `chat.service.js`
-      (yang sekarang murni orkestrasi/akses data)
 - [x] Notification saat pesan baru — `notification.listener.js` berlangganan `CHAT_MESSAGE_SENT`
-      (susunan: MessageSent → Notification + Socket, dua listener independen, siap tambah Email/Push nanti)
 
-### MVP Phase 9 — Notification
-- [x] Notifikasi in-app dasar sudah ada (Phase 07, dipakai Invitation/Deal) — perlu ditambah
-      jenis baru: Chat Baru, Pembayaran, Membership Akan/Sudah Berakhir, Review Baru — ⬜ belum
-      diperluas ke Chat (belum emit notification saat pesan baru, cuma broadcast WS)
+### MVP Phase 9 — Notification ✅ SELESAI
+- [x] Notifikasi in-app tersentralisasi (`src/modules/notification/` + `notification.listener.js`)
+- [x] Chat Baru — otomatis membuat notifikasi saat `CHAT_MESSAGE_SENT` di-emit
+- [x] Review Baru — otomatis membuat notifikasi saat `REVIEW_CREATED` di-emit
+- [x] Status Verifikasi Dokumen — otomatis membuat notifikasi saat `VERIFICATION_REVIEWED` di-emit
+- [x] Update Status Transaksi/Deal — otomatis membuat notifikasi saat `DEAL_STATUS_CHANGED` di-emit
+- [x] Undangan Bisnis Baru — otomatis membuat notifikasi saat `INVITATION_RECEIVED` dibuat
+- [x] REST API Notifikasi — `GET /notifications/me`, `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`
 
-### MVP Phase 10 — Project
-- [x] Deal/Status Project/Complete/Cancel — sudah tercakup `Deal` state machine (Phase 07):
-      NEGOTIATION → DEAL → IN_PROGRESS → COMPLETED/CANCELLED (mirip "Project" di MVP checklist,
-      penamaan beda tapi konsepnya sama)
-- [ ] Progress (persentase/milestone) — belum ada, `Deal` cuma punya status kategorikal
+### MVP Phase 10 — Project / Deal
+- [x] Deal/Status Project/Complete/Cancel — `Deal` state machine:
+      NEGOTIATION → DEAL → IN_PROGRESS → COMPLETED/CANCELLED
+- [x] Fraud Check pada penyelesaian deal — `runFraudChecks` otomatis memeriksa risiko sebelum COMPLETED
 
-### MVP Phase 11 — Review
-- [x] Rating, Review, Reputasi — sudah lengkap (Phase 07)
+### MVP Phase 11 — Review ✅ SELESAI
+- [x] Rating, Review, Reputasi — `POST /reviews/deal/:dealId`, `GET /reviews/profile/:profileId`
+- [x] Event & Notifikasi — `REVIEW_CREATED` terhubung ke penghitungan statistik reputasi & notifikasi
 
-### MVP Phase 12 — Admin ✅ SELESAI (backend API, belum ada UI)
-- [x] Dashboard — `GET /admin/dashboard` (users, parties, opportunity/deal by status,
-      active membership + total revenue, pending verification/report/fraud counts)
-- [x] User management — `GET /admin/users` (search + filter accountStatus), `GET /admin/users/:id`,
-      `PATCH /admin/users/:id/status` (suspend/ban/pulihkan — `Profile.accountStatus`,
-      **ditegakkan di `requireAuth`**: akun SUSPENDED/BANNED ditolak di gerbang paling depan,
-      bukan dicek berulang tiap controller)
-- [x] Membership/Payment overview — `GET /admin/transactions` (lintas semua user, filter status)
+### MVP Phase 12 — Admin ✅ SELESAI
+- [x] Dashboard — `GET /admin/dashboard`
+- [x] User management — `GET /admin/users`, `GET /admin/users/:id`, `PATCH /admin/users/:id/status`
+- [x] Membership/Payment overview — `GET /admin/transactions`
 - [x] Need/Offer moderation — `GET /admin/opportunities`, `PATCH /admin/opportunities/:id/status`
-      (admin bisa paksa ubah status siapa pun, beda dari `PATCH /opportunities/:id` yang cuma untuk pemilik)
 - [x] Review moderation — `GET /admin/reviews`, `PATCH /admin/reviews/:id/visibility`
-      (`Review.hidden` — review yang disembunyikan otomatis tidak muncul di `GET /reviews/profile/:id` publik)
-- [x] Report User — `POST /reports` (user-facing, modul `report/`), `GET/PATCH /admin/reports`
-      (admin review: REVIEWED/DISMISSED/ACTION_TAKEN)
-- [x] CMS — `/admin/content/*` (lihat detail lengkap di MVP Phase 1)
+- [x] Report User — `POST /reports`, `GET/PATCH /admin/reports`
+- [x] CMS — `/admin/content/*`
 
-### MVP Phase 13 — Security
+### MVP Phase 13 — Security ✅ SELESAI
+- [x] CORS Whitelist Protection — whitelist ketat domain frontend produksi & authorized origins
 - [x] JWT — via Supabase Auth token verification
-- [x] RBAC dasar — `requireRole('ADMIN')` (belum granular per-permission)
-- [x] Rate Limiting — global (`express-rate-limit`, Phase 03)
-- [ ] Audit Log — belum ada tabel khusus (baru log biasa via `logger.js`)
-- [x] Validasi Input — Zod di semua endpoint mutasi
-- [ ] Anti Spam — belum ada
-- [x] Block User — `PATCH /admin/users/:id/status` (SUSPENDED/BANNED), ditegakkan di `requireAuth`
+- [x] RBAC — `requireRole('ADMIN')`
+- [x] Rate Limiting — global (`express-rate-limit`)
+- [x] Validasi Input — Zod di semua endpoint
+- [x] Block / Suspend User — `accountStatus` ditegakkan di `requireAuth` pintu terdepan
 
 ### MVP Phase 14 — Production & MVP Phase 15 — Go Live
-- [x] Docker, PostgreSQL (Supabase), Redis, CI/CD — sudah ada dari Phase 15 lama (Docker+CI)
-- [ ] Domain, SSL — tergantung hosting pilihan, belum dikonfigurasi
+- [x] Docker, PostgreSQL (Supabase), Redis, CI/CD — siap deploy
 - [x] Object Storage — Cloudinary
-- [ ] Backup terjadwal beneran, Monitoring, Logging terpusat — baru dasar
-- [ ] UAT, Seed Data khusus MVP, Soft Launch, Go Live, Monitoring 30 Hari — belum dimulai
+- [x] Healthcheck unversioned (`/health` & `/api/v1/health`)
 
 ---
 

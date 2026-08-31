@@ -57,9 +57,38 @@ const listOpportunitySchema = {
 
 const idParamSchema = { params: z.object({ id: z.string().uuid() }) };
 
+const uploadDocumentSchema = {
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({
+    documentType: z
+      .enum([
+        'PROOF_OF_TRADE',
+        'QUALITY_CERTIFICATE',
+        'INVOICE',
+        'SPECIFICATION',
+        'SAMPLE_IMAGE',
+        'LEGAL_COMPLIANCE',
+        'OTHER',
+      ])
+      .default('PROOF_OF_TRADE')
+      .optional(),
+    title: z.string().max(100).optional(),
+  }),
+};
+
+const documentParamSchema = {
+  params: z.object({
+    id: z.string().uuid(),
+    documentId: z.string().uuid(),
+  }),
+};
+
 module.exports = {
   createOpportunitySchema,
   updateOpportunitySchema,
   listOpportunitySchema,
   idParamSchema,
+  uploadDocumentSchema,
+  documentParamSchema,
 };
+

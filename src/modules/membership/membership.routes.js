@@ -47,15 +47,23 @@ const {
   listMyTransactions,
   devActivate,
 } = require('./membership.controller');
-const { requireAuth } = require('../../middlewares/auth.middleware');
+const { requireVerifiedSession } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
 const { checkoutSchema, webhookSchema, devActivateSchema } = require('../../validations/membership.validation');
 
 router.get('/plans', listPlans);
-router.get('/me', requireAuth, getMyMembership);
-router.post('/checkout', requireAuth, validate(checkoutSchema), checkout);
+router.get('/me', requireVerifiedSession(), getMyMembership);
+router.post('/checkout', requireVerifiedSession(), validate(checkoutSchema), checkout);
 router.post('/webhook/:provider', validate(webhookSchema), webhook); // publik, keamanan via signature per-adapter
-router.get('/transactions/me', requireAuth, listMyTransactions);
-router.post('/dev-activate', requireAuth, validate(devActivateSchema), devActivate);
+router.post('/midtrans/webhook', (req, res, next) => {
+  req.params.provider = 'midtrans';
+  return webhook(req, res, next);
+});
+router.post('/webhook', (req, res, next) => {
+  req.params.provider = 'midtrans';
+  return webhook(req, res, next);
+});
+router.get('/transactions/me', requireVerifiedSession(), listMyTransactions);
+router.post('/dev-activate', requireVerifiedSession(), validate(devActivateSchema), devActivate);
 
 module.exports = router;

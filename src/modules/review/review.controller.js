@@ -3,6 +3,7 @@ const ApiError = require('../../utils/apiError');
 const { created, success } = require('../../utils/apiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const { recomputePartyStats } = require('../ranking/partyStats.service');
+const { eventBus, EVENTS } = require('../../core/eventBus');
 
 const createReview = asyncHandler(async (req, res) => {
   const { revieweeId, rating, comment } = req.body;
@@ -27,6 +28,14 @@ const createReview = asyncHandler(async (req, res) => {
   const revieweeParty =
     deal.invitation.fromParty.ownerId === revieweeId ? deal.invitation.fromPartyId : deal.invitation.toPartyId;
   await recomputePartyStats(revieweeParty);
+
+  eventBus.emit(EVENTS.REVIEW_CREATED, {
+    reviewId: review.id,
+    dealId: deal.id,
+    reviewerId: req.profile.id,
+    revieweeId,
+    rating,
+  });
 
   return created(res, review, 'Review submitted');
 });

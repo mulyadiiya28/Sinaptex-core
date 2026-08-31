@@ -20,39 +20,24 @@ describe('canStartConversation', () => {
     expect(membershipService.hasActiveMembership).not.toHaveBeenCalled();
   });
 
-  it('originType NEED is always free — never checks membership', async () => {
-    const result = await chatPolicy.canStartConversation({
+  it('originType NEED and OFFER are both free without membership gating (FR-16)', async () => {
+    const resultNeed = await chatPolicy.canStartConversation({
       initiatorProfileId: 'provider-1',
       recipientProfileId: 'need-owner-1',
       originType: 'NEED',
     });
-    expect(result.allowed).toBe(true);
+    expect(resultNeed.allowed).toBe(true);
+
+    const resultOffer = await chatPolicy.canStartConversation({
+      initiatorProfileId: 'buyer-1',
+      recipientProfileId: 'provider-1',
+      originType: 'OFFER',
+    });
+    expect(resultOffer.allowed).toBe(true);
     expect(membershipService.hasActiveMembership).not.toHaveBeenCalled();
   });
 
-  it('originType OFFER checks membership of the recipient (the Offer owner)', async () => {
-    membershipService.hasActiveMembership.mockResolvedValue(true);
-    const result = await chatPolicy.canStartConversation({
-      initiatorProfileId: 'buyer-1',
-      recipientProfileId: 'provider-1',
-      originType: 'OFFER',
-    });
-    expect(result.allowed).toBe(true);
-    expect(membershipService.hasActiveMembership).toHaveBeenCalledWith('provider-1');
-  });
-
-  it('originType OFFER rejects when recipient has no active membership', async () => {
-    membershipService.hasActiveMembership.mockResolvedValue(false);
-    const result = await chatPolicy.canStartConversation({
-      initiatorProfileId: 'buyer-1',
-      recipientProfileId: 'provider-1',
-      originType: 'OFFER',
-    });
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toMatch(/membership aktif/i);
-  });
-
-  it('originType PROFILE (direct chat) also requires recipient active membership', async () => {
+  it('originType PROFILE (direct chat) requires recipient active membership', async () => {
     membershipService.hasActiveMembership.mockResolvedValue(false);
     const result = await chatPolicy.canStartConversation({
       initiatorProfileId: 'p1',
@@ -61,6 +46,14 @@ describe('canStartConversation', () => {
     });
     expect(result.allowed).toBe(false);
     expect(membershipService.hasActiveMembership).toHaveBeenCalledWith('p2');
+
+    membershipService.hasActiveMembership.mockResolvedValue(true);
+    const resultAllowed = await chatPolicy.canStartConversation({
+      initiatorProfileId: 'p1',
+      recipientProfileId: 'p2',
+      originType: 'PROFILE',
+    });
+    expect(resultAllowed.allowed).toBe(true);
   });
 });
 

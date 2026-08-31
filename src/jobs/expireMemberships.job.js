@@ -1,11 +1,15 @@
 const prisma = require('../config/prisma');
 const logger = require('../core/logger');
-const { OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE } = require('../shared/constants');
+const {
+  OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE,
+  NEEDS_KEPT_AFTER_MEMBERSHIP_EXPIRE,
+} = require('../shared/constants');
 
 /**
  * 1) Membership ACTIVE yang expiresAt sudah lewat → EXPIRED
- * 2) FR-15: Offer ACTIVE milik profile itu di-trim — keep N terbaru (default 1),
- *    sisanya CLOSED. Need tidak disentuh.
+ * 2) FR-15 / Policy: Saat membership EXPIRED dan tidak diperpanjang,
+ *    kembalikan ke posisi default (1 Offer dan 1 Need terbaru tetap ACTIVE,
+ *    sisanya diubah statusnya menjadi CLOSED agar histori transaksi/chat tetap utuh).
  */
 async function expireMemberships() {
   const now = new Date();
@@ -22,10 +26,12 @@ async function expireMemberships() {
   });
   logger.info(`Expired ${toExpire.length} membership(s)`);
 
-  const keep = Math.max(0, OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE);
+  const keepOffers = Math.max(0, OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE);
+  const keepNeeds = Math.max(0, NEEDS_KEPT_AFTER_MEMBERSHIP_EXPIRE);
 
-  const closeCounts = await Promise.all(
+  const trimResults = await Promise.all(
     toExpire.map(async (membership) => {
+      // 1. Trim Offers: Pertahankan 1 terbaru (berdasarkan createdAt DESC), sisanya CLOSED
       const offers = await prisma.opportunity.findMany({
         where: {
           type: 'OFFER',
@@ -36,22 +42,49 @@ async function expireMemberships() {
         select: { id: true },
       });
 
-      if (offers.length <= keep) return 0;
+      let closedOfferCount = 0;
+      if (offers.length > keepOffers) {
+        const toCloseOfferIds = offers.slice(keepOffers).map((o) => o.id);
+        const result = await prisma.opportunity.updateMany({
+          where: { id: { in: toCloseOfferIds } },
+          data: { status: 'CLOSED' },
+        });
+        closedOfferCount = result.count;
+      }
 
-      const toCloseIds = offers.slice(keep).map((o) => o.id);
-      const result = await prisma.opportunity.updateMany({
-        where: { id: { in: toCloseIds } },
-        data: { status: 'CLOSED' },
+      // 2. Trim Needs: Pertahankan 1 terbaru (berdasarkan createdAt DESC), sisanya CLOSED
+      const needs = await prisma.opportunity.findMany({
+        where: {
+          type: 'NEED',
+          status: 'ACTIVE',
+          party: { ownerId: membership.profileId },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
       });
-      return result.count;
+
+      let closedNeedCount = 0;
+      if (needs.length > keepNeeds) {
+        const toCloseNeedIds = needs.slice(keepNeeds).map((n) => n.id);
+        const result = await prisma.opportunity.updateMany({
+          where: { id: { in: toCloseNeedIds } },
+          data: { status: 'CLOSED' },
+        });
+        closedNeedCount = result.count;
+      }
+
+      return { closedOfferCount, closedNeedCount };
     })
   );
 
-  const closedOffers = closeCounts.reduce((sum, n) => sum + n, 0);
+  const totalClosedOffers = trimResults.reduce((sum, r) => sum + r.closedOfferCount, 0);
+  const totalClosedNeeds = trimResults.reduce((sum, r) => sum + r.closedNeedCount, 0);
 
-  if (closedOffers > 0) {
+  if (totalClosedOffers > 0 || totalClosedNeeds > 0) {
     logger.info(
-      `Closed ${closedOffers} Offer(s) after membership expire (kept ${keep} per profile)`
+      `Trimmed opportunities after membership expire: ` +
+        `Closed ${totalClosedOffers} Offer(s) (kept ${keepOffers}) and ` +
+        `${totalClosedNeeds} Need(s) (kept ${keepNeeds})`
     );
   }
 
@@ -59,3 +92,4 @@ async function expireMemberships() {
 }
 
 module.exports = expireMemberships;
+

@@ -235,6 +235,11 @@ async function submitFactorValue({ diagnosisId, factorId, value }) {
   return evaluateAndUpdate(diagnosisId);
 }
 
+async function getRecommendations(diagnosisId) {
+  const { decideForRootCause } = require('../decision/decision.service');
+  return decideForRootCause(diagnosisId);
+}
+
 module.exports = {
   startDiagnosis,
   submitFactorValue,
@@ -242,4 +247,5 @@ module.exports = {
   detectPattern,
   parseFactorValue,
   evaluateCondition,
+  getRecommendations,
 };

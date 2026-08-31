@@ -1,7 +1,7 @@
 const { Server } = require('socket.io');
 const { supabaseAdmin } = require('../config/supabase');
 const prisma = require('../config/prisma');
-const env = require('../config/env');
+const { isOriginAllowed } = require('../config/cors.config');
 const logger = require('./logger');
 const { eventBus, EVENTS } = require('./eventBus');
 const chatService = require('../modules/chat/chat.service');
@@ -27,7 +27,15 @@ const chatService = require('../modules/chat/chat.service');
 
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
-    cors: { origin: env.clientUrl, credentials: true },
+    cors: {
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error('Origin not allowed by CORS'));
+      },
+      credentials: true,
+    },
   });
 
   io.use(async (socket, next) => {

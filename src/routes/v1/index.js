@@ -53,6 +53,7 @@ router.use('/reports', require('../../modules/report/report.routes'));
 router.use('/membership', require('../../modules/membership/membership.routes'));
 router.use('/pricing', require('../../modules/pricing/pricing.routes'));
 router.use('/boosts', require('../../modules/boost/boost.routes'));
+router.use('/escrow', require('../../modules/escrow/escrow.routes'));
 
 // Belum jadi modul terpisah — saat ini hidup di dalam Membership (webhook per-
 // provider di /membership/webhook/:provider, invoice di MembershipTransaction).

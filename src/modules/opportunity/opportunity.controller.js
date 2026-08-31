@@ -1,12 +1,11 @@
 const prisma = require('../../config/prisma');
 const ApiError = require('../../utils/apiError');
-const ErrorCodes = require('../../utils/errorCodes');
 const { created, success } = require('../../utils/apiResponse');
 const asyncHandler = require('../../utils/asyncHandler');
 const { uploadBuffer } = require('../../utils/cloudinaryUpload');
 const { toSkipTake, buildMeta } = require('../../shared/pagination');
-const { MAX_ACTIVE_OFFERS } = require('../../shared/constants');
-const membershipService = require('../membership/membership.service');
+const opportunityPolicyService = require('./opportunityPolicy.service');
+const opportunityDocumentService = require('./opportunityDocument.service');
 
 const includeDefault = {
   category: true,
@@ -16,30 +15,8 @@ const includeDefault = {
   party: { select: { id: true, name: true, verificationStatus: true, logoUrl: true } },
 };
 
-/** Hitung Offer ACTIVE milik Profile (lintas semua Party-nya). */
-async function countActiveOffers(profileId, { excludeOpportunityId } = {}) {
-  return prisma.opportunity.count({
-    where: {
-      type: 'OFFER',
-      status: 'ACTIVE',
-      party: { ownerId: profileId },
-      ...(excludeOpportunityId && { id: { not: excludeOpportunityId } }),
-    },
-  });
-}
-
-async function assertOfferQuota(profileId, { excludeOpportunityId } = {}) {
-  const count = await countActiveOffers(profileId, { excludeOpportunityId });
-  if (count >= MAX_ACTIVE_OFFERS) {
-    throw ApiError.forbidden(
-      `Kuota Offer aktif maksimal ${MAX_ACTIVE_OFFERS}. Tutup atau nonaktifkan Offer lain dulu.`,
-      ErrorCodes.OFFER_QUOTA_EXCEEDED
-    );
-  }
-}
-
 // STEP 3: Create Opportunity (NEED or OFFER)
-// Need selalu gratis. Offer: membership aktif + kuota max MAX_ACTIVE_OFFERS (FR-15).
+// Non-member: max 1 NEED, max 1 OFFER. Member: max 20 NEED, max 20 OFFER.
 const createOpportunity = asyncHandler(async (req, res) => {
   const { partyId, capabilityNames, ...data } = req.body;
 
@@ -48,16 +25,9 @@ const createOpportunity = asyncHandler(async (req, res) => {
   });
   if (!party) throw ApiError.forbidden('You do not own this party');
 
-  if (data.type === 'OFFER') {
-    const active = await membershipService.hasActiveMembership(req.profile.id);
-    if (!active) {
-      throw ApiError.forbidden(
-        'Membuat Offer butuh membership aktif. Need tetap gratis tanpa batasan ini.',
-        ErrorCodes.MEMBERSHIP_REQUIRED
-      );
-    }
-    // Default status Opportunity = ACTIVE — kuota berlaku untuk create.
-    await assertOfferQuota(req.profile.id);
+  const isTargetActive = !data.status || data.status === 'ACTIVE';
+  if (isTargetActive) {
+    await opportunityPolicyService.enforceOpportunityQuota(req.profile.id, data.type);
   }
 
   const opportunity = await prisma.$transaction(async (tx) => {
@@ -149,18 +119,13 @@ const updateOpportunity = asyncHandler(async (req, res) => {
   if (!existing) throw ApiError.notFound('Opportunity not found');
   if (existing.party.ownerId !== req.profile.id) throw ApiError.forbidden();
 
-  // Re-aktifkan Offer (status → ACTIVE) ikut kuota + membership (FR-15).
+  // Re-aktifkan Opportunity (status → ACTIVE) ikut batasan kuota membership.
   const becomingActive =
     req.body.status === 'ACTIVE' && existing.status !== 'ACTIVE';
-  if (existing.type === 'OFFER' && becomingActive) {
-    const active = await membershipService.hasActiveMembership(req.profile.id);
-    if (!active) {
-      throw ApiError.forbidden(
-        'Mengaktifkan Offer butuh membership aktif.',
-        ErrorCodes.MEMBERSHIP_REQUIRED
-      );
-    }
-    await assertOfferQuota(req.profile.id, { excludeOpportunityId: existing.id });
+  if (becomingActive) {
+    await opportunityPolicyService.enforceOpportunityQuota(req.profile.id, existing.type, {
+      excludeOpportunityId: existing.id,
+    });
   }
 
   const updated = await prisma.opportunity.update({
@@ -169,6 +134,28 @@ const updateOpportunity = asyncHandler(async (req, res) => {
     include: includeDefault,
   });
   return success(res, updated, 'Opportunity updated');
+});
+
+const closeOpportunity = asyncHandler(async (req, res) => {
+  const opp = await prisma.opportunity.findUnique({
+    where: { id: req.params.id },
+    include: { party: true },
+  });
+  if (!opp) throw ApiError.notFound('Opportunity not found');
+  if (opp.party.ownerId !== req.profile.id) {
+    throw ApiError.forbidden('You do not own this opportunity');
+  }
+  if (opp.status === 'CLOSED') {
+    throw ApiError.conflict('Opportunity is already closed');
+  }
+
+  const updated = await prisma.opportunity.update({
+    where: { id: opp.id },
+    data: { status: 'CLOSED' },
+    include: includeDefault,
+  });
+
+  return success(res, updated, 'Opportunity closed successfully');
 });
 
 const uploadMedia = asyncHandler(async (req, res) => {
@@ -198,10 +185,46 @@ const uploadMedia = asyncHandler(async (req, res) => {
   return created(res, media, 'Media uploaded');
 });
 
+const uploadOpportunityDocument = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw ApiError.badRequest('File is required (field name: "file")');
+  }
+
+  const result = await opportunityDocumentService.attachDocumentToOpportunity({
+    opportunityId: req.params.id,
+    profileId: req.profile.id,
+    file: req.file,
+    documentType: req.body.documentType,
+    title: req.body.title,
+  });
+
+  return created(res, result, 'Verified document attached to opportunity');
+});
+
+const listOpportunityDocuments = asyncHandler(async (req, res) => {
+  const documents = await opportunityDocumentService.listOpportunityDocuments(req.params.id);
+  return success(res, documents, 'Documents retrieved successfully');
+});
+
+const deleteOpportunityDocument = asyncHandler(async (req, res) => {
+  const result = await opportunityDocumentService.removeOpportunityDocument({
+    opportunityId: req.params.id,
+    mediaId: req.params.documentId,
+    profileId: req.profile.id,
+  });
+
+  return success(res, result, 'Document removed from opportunity');
+});
+
 module.exports = {
   createOpportunity,
   listOpportunities,
   getOpportunity,
   updateOpportunity,
+  closeOpportunity,
   uploadMedia,
+  uploadOpportunityDocument,
+  listOpportunityDocuments,
+  deleteOpportunityDocument,
 };
+

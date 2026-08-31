@@ -100,6 +100,8 @@ model Party {
   owner              Profile                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   capabilities       PartyCapability[]
   verifications      VerificationDocument[]
+  escrowsAsBuyer     EscrowTransaction[]    @relation("EscrowBuyerParty")
+  escrowsAsSeller    EscrowTransaction[]    @relation("EscrowSellerParty")
 
   @@map("parties")
 }
@@ -296,11 +298,47 @@ model Deal {
   endAt        DateTime?
   cancelReason String?
   createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  invitation   Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
-  reviews      Review[]
+  updatedAt          DateTime            @updatedAt
+  invitation         Invitation          @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  reviews            Review[]
+  escrowTransactions EscrowTransaction[]
 
   @@map("deals")
+}
+
+model EscrowTransaction {
+  id                String       @id @default(uuid())
+  dealId            String?
+  buyerPartyId      String
+  sellerPartyId     String
+  amount            Float
+  fee               Float        @default(0)
+  currency          String       @default("IDR")
+  status            EscrowStatus @default(PENDING_HOLD)
+  holdReference     String?      @unique
+  releaseReference  String?
+  refundReference   String?
+  heldAt            DateTime?
+  buyerConfirmedAt  DateTime?
+  sellerConfirmedAt DateTime?
+  releasedAt        DateTime?
+  refundedAt        DateTime?
+  disputedAt        DateTime?
+  disputeReason     String?
+  notes             String?
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  deal              Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  buyerParty        Party        @relation("EscrowBuyerParty", fields: [buyerPartyId], references: [id], onDelete: Cascade)
+  sellerParty       Party        @relation("EscrowSellerParty", fields: [sellerPartyId], references: [id], onDelete: Cascade)
+
+  @@index([buyerPartyId])
+  @@index([sellerPartyId])
+  @@index([dealId])
+  @@index([status])
+  @@map("escrow_transactions")
 }
 
 model Review {
@@ -1229,4 +1267,16 @@ enum ReportStatus {
 enum ContentStatus {
   DRAFT
   PUBLISHED
+}
+
+enum EscrowStatus {
+  PENDING_HOLD
+  HELD
+  BUYER_CONFIRMED
+  SELLER_CONFIRMED
+  COMPLETED
+  RELEASED
+  REFUNDED
+  DISPUTED
+  CANCELLED
 }

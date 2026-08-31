@@ -1,17 +1,7 @@
-const { PrismaClient } = require('@prisma/client');
-const env = require('./env');
+const databaseService = require('../core/database.service');
 
-// Singleton pattern to avoid exhausting DB connections on hot-reload
-const globalForPrisma = globalThis;
-
-const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient({
-    log: env.nodeEnv === 'development' ? ['warn', 'error'] : ['error'],
-  });
-
-if (env.nodeEnv !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
-
-module.exports = prisma;
+/**
+ * Re-export the singleton Prisma Client instance from the Database Utility Service.
+ * Ensures backward compatibility across existing modules.
+ */
+module.exports = databaseService.prisma;

@@ -3,7 +3,7 @@ const env = require('./config/env');
 const prisma = require('./config/prisma');
 const { initSocket } = require('./core/socket');
 
-const server = app.listen(env.port, () => {
+const server = app.listen(env.port, '0.0.0.0', () => {
   // eslint-disable-next-line no-console
   console.log(`🚀 Sinaptex API running on port ${env.port} [${env.nodeEnv}]`);
   // eslint-disable-next-line no-console

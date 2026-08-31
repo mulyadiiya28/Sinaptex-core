@@ -97,7 +97,11 @@ const {
   listOpportunities,
   getOpportunity,
   updateOpportunity,
+  closeOpportunity,
   uploadMedia,
+  uploadOpportunityDocument,
+  listOpportunityDocuments,
+  deleteOpportunityDocument,
 } = require('./opportunity.controller');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const validate = require('../../middlewares/validate.middleware');
@@ -108,6 +112,8 @@ const {
   updateOpportunitySchema,
   listOpportunitySchema,
   idParamSchema,
+  uploadDocumentSchema,
+  documentParamSchema,
 } = require('../../validations/opportunity.validation');
 
 router.post('/', requireAuth, validate(createOpportunitySchema), createOpportunity);
@@ -122,6 +128,23 @@ router.get(
 );
 router.get('/:id', validate(idParamSchema), getOpportunity);
 router.patch('/:id', requireAuth, validate(updateOpportunitySchema), updateOpportunity);
+router.post('/:id/close', requireAuth, validate(idParamSchema), closeOpportunity);
+router.patch('/:id/close', requireAuth, validate(idParamSchema), closeOpportunity);
 router.post('/:id/media', requireAuth, upload.single('file'), validate(idParamSchema), uploadMedia);
+router.get('/:id/documents', validate(idParamSchema), listOpportunityDocuments);
+router.post(
+  '/:id/documents',
+  requireAuth,
+  upload.single('file'),
+  validate(uploadDocumentSchema),
+  uploadOpportunityDocument
+);
+router.delete(
+  '/:id/documents/:documentId',
+  requireAuth,
+  validate(documentParamSchema),
+  deleteOpportunityDocument
+);
 
 module.exports = router;
+

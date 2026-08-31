@@ -1,7 +1,7 @@
 require('dotenv').config();
 
-function required(name) {
-  const value = process.env[name];
+function required(name, fallback = '') {
+  const value = process.env[name] || fallback;
   if (!value && process.env.NODE_ENV !== 'test') {
     // eslint-disable-next-line no-console
     console.warn(`[env] WARNING: ${name} is not set`);
@@ -10,23 +10,24 @@ function required(name) {
 }
 
 module.exports = {
-  port: process.env.PORT || 4000,
+  port: Number(process.env.PORT) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
-  clientUrl: process.env.CLIENT_URL || '*',
+  clientUrl: process.env.CLIENT_URL || 'https://sinaptex.com',
+  allowedOrigins: process.env.ALLOWED_ORIGINS || '',
 
-  databaseUrl: required('DATABASE_URL'),
+  databaseUrl: required('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/sinaptex'),
 
   supabase: {
-    url: required('SUPABASE_URL'),
-    anonKey: required('SUPABASE_ANON_KEY'),
-    serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
-    jwtSecret: required('SUPABASE_JWT_SECRET'),
+    url: required('SUPABASE_URL', 'https://mock.supabase.co'),
+    anonKey: required('SUPABASE_ANON_KEY', 'mock-anon-key'),
+    serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY', 'mock-service-role-key'),
+    jwtSecret: required('SUPABASE_JWT_SECRET', 'mock-jwt-secret'),
   },
 
   cloudinary: {
-    cloudName: required('CLOUDINARY_CLOUD_NAME'),
-    apiKey: required('CLOUDINARY_API_KEY'),
-    apiSecret: required('CLOUDINARY_API_SECRET'),
+    cloudName: required('CLOUDINARY_CLOUD_NAME', 'mock-cloud'),
+    apiKey: required('CLOUDINARY_API_KEY', 'mock-api-key'),
+    apiSecret: required('CLOUDINARY_API_SECRET', 'mock-api-secret'),
   },
 
   ranking: {

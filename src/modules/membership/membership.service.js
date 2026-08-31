@@ -162,8 +162,24 @@ async function handlePaymentWebhook(provider, payload) {
   }
 
   const transaction = await prisma.membershipTransaction.findFirst({
-    where: { gatewayTransactionId: result.orderId },
-    include: { membership: true, plan: true },
+    where: {
+      OR: [
+        { gatewayTransactionId: result.orderId },
+        { invoiceNumber: result.orderId },
+      ],
+    },
+    include: {
+      membership: {
+        include: {
+          profile: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      },
+      plan: true,
+    },
   });
   if (!transaction) {
     logger.warn('Payment webhook: transaction not found', { provider, orderId: result.orderId });
@@ -202,6 +218,40 @@ async function handlePaymentWebhook(provider, payload) {
       orderId: result.orderId,
       provider,
     });
+
+    // In-app notification
+    try {
+      await prisma.notification.create({
+        data: {
+          profileId: transaction.membership.profileId,
+          type: 'MEMBERSHIP_ACTIVATED',
+          title: 'Membership Aktif!',
+          message: `Selamat, paket ${transaction.plan.name} Anda telah aktif hingga ${expiresAt.toLocaleDateString('id-ID')}.`,
+          data: {
+            transactionId: transaction.id,
+            planId: transaction.planId,
+            expiresAt: expiresAt.toISOString(),
+          },
+        },
+      });
+    } catch (notifErr) {
+      logger.error('Failed to create in-app notification for membership', { error: notifErr.message });
+    }
+
+    // Email notification
+    const recipientEmail = transaction.membership?.profile?.user?.email;
+    if (recipientEmail) {
+      try {
+        const { sendEmail } = require('../../utils/mailer');
+        await sendEmail({
+          to: recipientEmail,
+          subject: 'Pembayaran Berhasil - Membership Sinaptex Aktif',
+          text: `Halo ${transaction.membership.profile.fullName || 'Pengguna'},\n\nPembayaran untuk paket membership ${transaction.plan.name} berhasil diverifikasi. Status membership Anda sekarang AKTIF hingga ${expiresAt.toLocaleDateString('id-ID')}.\n\nNomor Invoice: ${transaction.invoiceNumber}\nJumlah: Rp ${transaction.amount.toLocaleString('id-ID')}\n\nTerima kasih telah bergabung bersama Sinaptex!`,
+        });
+      } catch (mailErr) {
+        logger.error('Failed to send activation email', { error: mailErr.message });
+      }
+    }
   }
 
   return updatedTransaction;
@@ -231,6 +281,8 @@ async function devActivate({ profileId, durationDays = 30 }) {
   });
 }
 
+const { expireMembershipsAndTransitionTier } = require('./expireMemberships.service');
+
 module.exports = {
   getOrCreateMembership,
   getActiveMembership,
@@ -240,4 +292,7 @@ module.exports = {
   handlePaymentWebhook,
   listMyTransactions,
   devActivate,
+  expireMembershipsAndTransitionTier,
+  processExpiredMemberships: expireMembershipsAndTransitionTier,
 };
+

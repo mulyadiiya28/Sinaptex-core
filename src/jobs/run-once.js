@@ -26,11 +26,13 @@ const JOBS = {
   recomputePartyStats: require('./recomputePartyStats.job'),
   cleanupNotifications: require('./cleanupNotifications.job'),
   fraudScan: require('./fraudScan.job'),
+  databaseBackup: require('./databaseBackup.job'),
 };
 
 const GROUPS = {
   frequent: ['expireOpportunities', 'expireInvitations'],
   daily: ['expireMemberships', 'recomputePartyStats', 'cleanupNotifications', 'fraudScan'],
+  weekly: ['databaseBackup'],
   all: Object.keys(JOBS),
 };
 

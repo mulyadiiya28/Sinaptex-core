@@ -114,4 +114,18 @@ const requireRole = (...roles) =>
     next();
   });
 
-module.exports = { requireAuth, requireRole, verifySupabaseToken, optionalAuth };
+const {
+  requireVerifiedSession,
+  protectStateChanges,
+  isSessionVerified,
+} = require('./verifiedSession.middleware');
+
+module.exports = {
+  requireAuth,
+  requireRole,
+  verifySupabaseToken,
+  optionalAuth,
+  requireVerifiedSession,
+  protectStateChanges,
+  isSessionVerified,
+};

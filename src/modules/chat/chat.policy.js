@@ -3,20 +3,15 @@ const ErrorCodes = require('../../utils/errorCodes');
 const membershipService = require('../membership/membership.service');
 
 /**
- * CONVERSATION POLICY — semua aturan bisnis chat hidup DI SINI, terpisah dari
- * ConversationService yang fokus orkestrasi/akses data. Kalau aturan bisnis
- * berubah (mis. nanti ada tier membership berbeda), cukup ubah file ini.
+ * CONVERSATION POLICY — semua aturan bisnis chat hidup DI SINI.
  *
- * Business rule (hasil diskusi ulang domain):
- *   - originType NEED  -> gratis, TIDAK ADA gating membership sama sekali
- *     (provider merespons Need orang lain — Need selalu gratis)
- *   - originType OFFER -> recipient (pemilik Offer, bertindak sebagai Provider)
- *     WAJIB member aktif sebelum conversation BARU bisa dibuat
- *   - originType PROFILE (chat langsung, bukan dari Need/Offer) -> recipient
- *     WAJIB member aktif juga (default paling aman: dia dihubungi sebagai
- *     penyedia jasa/expertise, sama seperti OFFER)
- *   - Conversation yang SUDAH ADA selalu boleh dilanjutkan, apa pun originType
- *     dan status membership saat ini (gating cuma berlaku saat membuat BARU)
+ * Business rule (FR-16 & FR-17):
+ *   - originType NEED / OFFER -> gratis, TIDAK ADA gating membership.
+ *     Pengguna dapat berinteraksi langsung dari kartu Need maupun Offer.
+ *   - originType PROFILE (Cold DM / chat langsung tanpa kartu opportunity) ->
+ *     recipient wajib memiliki membership aktif untuk menyaring unsolicited messages.
+ *   - Conversation yang SUDAH ADA selalu boleh dilanjutkan (reply), apa pun
+ *     originType dan status membership saat ini.
  */
 
 async function canStartConversation({ initiatorProfileId, recipientProfileId, originType }) {
@@ -28,17 +23,17 @@ async function canStartConversation({ initiatorProfileId, recipientProfileId, or
     };
   }
 
-  if (originType === 'NEED') {
-    // Need selalu gratis — TIDAK cek membership milik siapa pun di jalur ini.
+  // originType NEED atau OFFER berasal dari interaksi kartu Opportunity (bebas biaya/tanpa gating membership)
+  if (originType === 'NEED' || originType === 'OFFER') {
     return { allowed: true, reason: null, code: null };
   }
 
-  // originType OFFER atau PROFILE -> recipient bertindak sebagai Provider, wajib member aktif.
+  // originType PROFILE (Cold direct chat) -> recipient wajib member aktif untuk mencegah spam
   const recipientActive = await membershipService.hasActiveMembership(recipientProfileId);
   if (!recipientActive) {
     return {
       allowed: false,
-      reason: 'Tidak bisa memulai percakapan baru: penerima belum memiliki membership aktif.',
+      reason: 'Tidak bisa memulai direct chat: penerima belum memiliki membership aktif.',
       code: ErrorCodes.MEMBERSHIP_REQUIRED,
     };
   }

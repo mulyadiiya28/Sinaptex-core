@@ -9,7 +9,9 @@ module.exports = {
   INVITATION_EXPIRY_DAYS: 14, // invitation PENDING lebih lama dari ini otomatis EXPIRED
   NOTIFICATION_RETENTION_DAYS: 90, // notifikasi terbaca dihapus setelah ini (cleanup job)
 
-  // FR-15 Offer + membership lifecycle
+  // FR-15 Offer & Need + membership lifecycle
   MAX_ACTIVE_OFFERS: 20, // max Offer ACTIVE per Profile saat membership aktif
+  MAX_ACTIVE_NEEDS: 20, // max Need ACTIVE per Profile saat membership aktif
   OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1, // sisa Offer ACTIVE setelah membership EXPIRED
+  NEEDS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1, // sisa Need ACTIVE setelah membership EXPIRED
 };

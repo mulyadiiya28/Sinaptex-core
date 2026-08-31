@@ -1,9 +1,6 @@
 /**
- * Standalone scheduler process — run separately from the API server:
+ * Standalone scheduler process:
  *   node src/jobs/scheduler.js   (or `npm run scheduler`)
- * Not started automatically by `npm run dev/start` so the API stays lightweight;
- * run this as its own process/container in production (see docs/deployment-guide.md).
- * node-cron runs in-process and does NOT require Redis.
  */
 const cron = require('node-cron');
 const schedulerConfig = require('../config/scheduler.config');
@@ -15,6 +12,7 @@ const recomputeAllPartyStats = require('./recomputePartyStats.job');
 const cleanupNotifications = require('./cleanupNotifications.job');
 const fraudScan = require('./fraudScan.job');
 const expireMemberships = require('./expireMemberships.job');
+const membershipReminder = require('./membershipReminder.job');
 const databaseBackup = require('./databaseBackup.job');
 
 function schedule(name, cronExpr, task) {
@@ -39,6 +37,7 @@ schedule('recomputePartyStats', schedulerConfig.jobs.recomputePartyStats, recomp
 schedule('cleanupNotifications', schedulerConfig.jobs.cleanupNotifications, cleanupNotifications);
 schedule('fraudScan', schedulerConfig.jobs.fraudScan, fraudScan);
 schedule('expireMemberships', schedulerConfig.jobs.expireMemberships, expireMemberships);
+schedule('membershipReminders', schedulerConfig.jobs.membershipReminders, membershipReminder);
 schedule('databaseBackup', schedulerConfig.jobs.weeklyDatabaseBackup, databaseBackup);
 
 logger.info('Scheduler process started');

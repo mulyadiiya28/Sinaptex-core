@@ -1,18 +1,9 @@
 /**
  * One-shot job runner for shared hosting (Hostinger cron).
  *
- * Process starts → runs selected job(s) → exits.
- * Does NOT keep node-cron alive (unlike scheduler.js).
- *
- * Usage:
  *   node src/jobs/run-once.js expireMemberships
- *   node src/jobs/run-once.js expireOpportunities expireInvitations
- *   node src/jobs/run-once.js --group=frequent
  *   node src/jobs/run-once.js --group=daily
  *   npm run jobs:daily
- *
- * Env: load from .env in project root (via src/config/env.js → dotenv).
- * Cron must `cd` into the app directory so DATABASE_URL is found.
  */
 
 require('../config/env');
@@ -23,6 +14,7 @@ const JOBS = {
   expireOpportunities: require('./expireOpportunities.job'),
   expireInvitations: require('./expireInvitations.job'),
   expireMemberships: require('./expireMemberships.job'),
+  membershipReminders: require('./membershipReminder.job'),
   recomputePartyStats: require('./recomputePartyStats.job'),
   cleanupNotifications: require('./cleanupNotifications.job'),
   fraudScan: require('./fraudScan.job'),
@@ -31,7 +23,13 @@ const JOBS = {
 
 const GROUPS = {
   frequent: ['expireOpportunities', 'expireInvitations'],
-  daily: ['expireMemberships', 'recomputePartyStats', 'cleanupNotifications', 'fraudScan'],
+  daily: [
+    'expireMemberships',
+    'membershipReminders',
+    'recomputePartyStats',
+    'cleanupNotifications',
+    'fraudScan',
+  ],
   weekly: ['databaseBackup'],
   all: Object.keys(JOBS),
 };
@@ -78,11 +76,7 @@ async function runJob(name) {
 
 async function main() {
   const jobNames = resolveJobNames(process.argv.slice(2));
-  // Sequential (bukan for...of) — airbnb no-restricted-syntax
-  await jobNames.reduce(
-    (chain, name) => chain.then(() => runJob(name)),
-    Promise.resolve()
-  );
+  await jobNames.reduce((chain, name) => chain.then(() => runJob(name)), Promise.resolve());
 }
 
 main()

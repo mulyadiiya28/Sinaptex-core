@@ -2,16 +2,26 @@ module.exports = {
   MAX_UPLOAD_SIZE_BYTES: 10 * 1024 * 1024,
   DEFAULT_PAGE_SIZE: 20,
   MAX_PAGE_SIZE: 100,
-  MATCHING_CANDIDATE_POOL_SIZE: 200, // lihat matching.controller.js
+  MATCHING_CANDIDATE_POOL_SIZE: 200,
   REVIEW_RATING_MIN: 1,
   REVIEW_RATING_MAX: 5,
-  RECENT_ACTIVITY_WINDOW_DAYS: 30, // dipakai partyStats.service.js untuk activityScore
-  INVITATION_EXPIRY_DAYS: 14, // invitation PENDING lebih lama dari ini otomatis EXPIRED
-  NOTIFICATION_RETENTION_DAYS: 90, // notifikasi terbaca dihapus setelah ini (cleanup job)
+  RECENT_ACTIVITY_WINDOW_DAYS: 30,
+  INVITATION_EXPIRY_DAYS: 14,
+  NOTIFICATION_RETENTION_DAYS: 90,
 
   // FR-15 Offer & Need + membership lifecycle
-  MAX_ACTIVE_OFFERS: 20, // max Offer ACTIVE per Profile saat membership aktif
-  MAX_ACTIVE_NEEDS: 20, // max Need ACTIVE per Profile saat membership aktif
-  OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1, // sisa Offer ACTIVE setelah membership EXPIRED
-  NEEDS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1, // sisa Need ACTIVE setelah membership EXPIRED
+  MAX_ACTIVE_FREE_NEEDS: 1,
+  MAX_ACTIVE_FREE_OFFERS: 1,
+  MAX_ACTIVE_MEMBER_NEEDS: 20,
+  MAX_ACTIVE_MEMBER_OFFERS: 20,
+  /** @deprecated gunakan MAX_ACTIVE_MEMBER_OFFERS */
+  MAX_ACTIVE_OFFERS: 20,
+  /** @deprecated gunakan MAX_ACTIVE_MEMBER_NEEDS */
+  MAX_ACTIVE_NEEDS: 20,
+  OFFERS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1,
+  NEEDS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1,
+  POSTINGS_KEPT_AFTER_MEMBERSHIP_EXPIRE: 1,
+
+  /** Pengingat membership sebelum expiresAt (hari) */
+  MEMBERSHIP_REMINDER_DAYS: [3, 1],
 };

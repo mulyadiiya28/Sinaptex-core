@@ -1,32 +1,11 @@
 const prisma = require('../../config/prisma');
 const logger = require('../../core/logger');
 const opportunityPolicyService = require('../opportunity/opportunityPolicy.service');
+const { sendEmail } = require('../../utils/mailer');
 
-/**
- * Service to identify users with expired memberships and systematically transition them
- * to the non-member tier by suspending/closing their excess active offers and needs.
- *
- * @param {object} [options]
- * @param {Date} [options.asOfDate=new Date()] - Date to evaluate expiry against
- * @param {number} [options.customKeepCount] - Optional override for max active opportunities retained
- * @returns {Promise<{
- *   expiredMembershipsCount: number,
- *   totalClosedOffers: number,
- *   totalClosedNeeds: number,
- *   transitionedProfiles: Array<{
- *     profileId: string,
- *     membershipId: string,
- *     keptOffers: number,
- *     closedOffersCount: number,
- *     keptNeeds: number,
- *     closedNeedsCount: number,
- *   }>
- * }>}
- */
 async function expireMembershipsAndTransitionTier(options = {}) {
   const asOfDate = options.asOfDate || new Date();
 
-  // 1. Identify all active memberships whose expiresAt is past asOfDate
   const expiredMemberships = await prisma.membership.findMany({
     where: {
       status: 'ACTIVE',
@@ -54,21 +33,18 @@ async function expireMembershipsAndTransitionTier(options = {}) {
     };
   }
 
-  // 2. Mark identified memberships as EXPIRED
   const membershipIds = expiredMemberships.map((m) => m.id);
   await prisma.membership.updateMany({
     where: { id: { in: membershipIds } },
     data: { status: 'EXPIRED' },
   });
 
-  // 3. Determine retention limit for non-members
   const policy = await opportunityPolicyService.getPolicy();
   const keepCount =
     typeof options.customKeepCount === 'number'
       ? options.customKeepCount
       : policy.expiredMembershipKeepCount || 1;
 
-  // 4. Systematically transition each profile to non-member tier and prune excess opportunities
   const transitionedProfiles = await Promise.all(
     expiredMemberships.map(async (membership) => {
       const pruneResult = await opportunityPolicyService.pruneOpportunitiesForProfile(
@@ -81,7 +57,6 @@ async function expireMembershipsAndTransitionTier(options = {}) {
           ? `${pruneResult.closedOffersCount} Offer dan ${pruneResult.closedNeedsCount} Need yang melebihi batas kuota gratis telah dinonaktifkan.`
           : 'Kuota aktif Offer & Need disesuaikan ke batas reguler.';
 
-      // Create notification to inform user about their tier transition
       try {
         await prisma.notification.create({
           data: {
@@ -101,6 +76,22 @@ async function expireMembershipsAndTransitionTier(options = {}) {
           profileId: membership.profileId,
           error: notifErr.message,
         });
+      }
+
+      const email = membership.profile?.user?.email;
+      if (email) {
+        try {
+          await sendEmail({
+            to: email,
+            subject: '[Sinaptex] Membership Anda telah berakhir',
+            text: `Halo ${membership.profile.fullName || 'Pengguna'},\n\nMasa aktif membership Anda telah berakhir. Akun beralih ke paket gratis.\n${excessNotice}\n\nPerpanjang kapan saja lewat menu Membership di aplikasi.\n`,
+          });
+        } catch (mailErr) {
+          logger.warn('Failed to email membership expiration', {
+            profileId: membership.profileId,
+            error: mailErr.message,
+          });
+        }
       }
 
       return {

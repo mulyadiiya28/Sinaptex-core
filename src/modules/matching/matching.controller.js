@@ -12,6 +12,14 @@ const oppInclude = {
   boost: true,
 };
 
+/** Active paid boost only — PENDING/FAILED must not affect ranking. */
+function activeBoostWeight(boost) {
+  if (!boost) return 0;
+  if (boost.paymentStatus !== 'PAID') return 0;
+  if (boost.expiredAt && boost.expiredAt < new Date()) return 0;
+  return Math.min(100, boost.priorityWeight || 0);
+}
+
 /**
  * STEP 5 + STEP 6: Matching Engine + Ranking Engine
  * Finds candidate opposite-type opportunities, hard-filters them, scores them,
@@ -77,9 +85,7 @@ const runMatching = asyncHandler(async (req, res) => {
           expiredCount: 0,
         };
 
-        const boostPriorityWeight = candidate.boost?.priorityWeight
-          ? Math.min(100, candidate.boost.priorityWeight)
-          : 0;
+        const boostPriorityWeight = activeBoostWeight(candidate.boost);
 
         const { finalScore, breakdown: rankingBreakdown } = computeFinalScore({
           matchScore,

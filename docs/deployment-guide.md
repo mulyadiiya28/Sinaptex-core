@@ -17,6 +17,28 @@ npx prisma migrate deploy
 npm start              # API saja — scheduler TIDAK ikut start
 ```
 
+### Build Command di Hostinger (WAJIB)
+
+Di pengaturan **Node.js App** Hostinger, isi **Build command** dengan salah satu:
+
+```bash
+npm ci --omit=dev && npx prisma generate
+```
+
+atau
+
+```bash
+npm install && npx prisma generate
+```
+
+Tanpa ini, error berikut akan muncul:
+
+```
+@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again.
+```
+
+`postinstall` di package.json sudah berisi `prisma generate`, tapi Hostinger sering melewati postinstall. Build command di atas menjamin client Prisma selalu ter-generate.
+
 ## Scheduler di shared hosting (Hostinger)
 
 Process `npm run scheduler` (node-cron hidup terus) **sering tidak cocok** di shared host:
@@ -98,5 +120,6 @@ Path `hbuilds/versions/<id>` **berubah**. Update baris cron ke version baru, ata
 - [ ] `CLIENT_URL` = domain frontend (CORS)
 - [ ] Migration production sudah jalan
 - [ ] Seed master data (plans, categories) sudah ada
+- [ ] **Build command Hostinger** berisi `npx prisma generate`
 - [ ] **Cron frequent + daily** terpasang dan path version benar
 - [ ] Uji `node src/jobs/run-once.js --group=daily` sekali lewat SSH

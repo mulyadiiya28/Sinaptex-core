@@ -1,18 +1,9 @@
-const crypto = require('crypto');
 const prisma = require('../../config/prisma');
 const ApiError = require('../../utils/apiError');
 const ErrorCodes = require('../../utils/errorCodes');
 const PaymentGateway = require('../../core/payment/PaymentGateway');
 const PaymentStatus = require('../../core/payment/PaymentStatus');
 const logger = require('../../core/logger');
-
-/**
- * BOOST — aktivasi paket prioritas Opportunity.
- * FREE: aktif langsung (PAID).
- * BASIC/PREMIUM/VIP: checkout Midtrans Snap; webhook yang mengaktifkan (bukan client).
- *
- * orderId gateway: `BOOST-{boostId}` agar webhook bisa resolve tanpa tabel transaksi terpisah.
- */
 
 const BOOST_ORDER_PREFIX = 'BOOST-';
 
@@ -32,7 +23,11 @@ function computeExpiry(startAt, durationDays) {
   return new Date(startAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
 }
 
-/** FREE atau aktivasi setelah bayar sukses. */
+function amountsMatch(expected, received) {
+  if (expected == null || received == null) return false;
+  return Math.abs(Number(expected) - Number(received)) < 1;
+}
+
 async function applyPaidBoost({ opportunityId, plan }) {
   const startAt = new Date();
   const expiredAt = computeExpiry(startAt, plan.durationDays);
@@ -58,11 +53,6 @@ async function applyPaidBoost({ opportunityId, plan }) {
   });
 }
 
-/**
- * Checkout boost:
- * - FREE → aktif langsung, tanpa gateway
- * - berbayar → buat/update row PENDING + Snap redirectUrl
- */
 async function checkout({ opportunityId, profileId, planType }) {
   const opportunity = await assertOpportunityOwner(opportunityId, profileId);
   const plan = await prisma.boostPlan.findUnique({ where: { type: planType } });
@@ -81,9 +71,7 @@ async function checkout({ opportunityId, profileId, planType }) {
   const startAt = new Date();
   const expiredAt = computeExpiry(startAt, plan.durationDays);
 
-  // PENDING: prioritas belum dihitung sebagai aktif sampai paymentStatus === PAID
-  // (ranking service harus cek paymentStatus; lihat catatan di bawah).
-  let boost = await prisma.opportunityBoost.upsert({
+  const boost = await prisma.opportunityBoost.upsert({
     where: { opportunityId },
     update: {
       planId: plan.id,
@@ -141,11 +129,6 @@ async function checkout({ opportunityId, profileId, planType }) {
   }
 }
 
-/**
- * Webhook handler untuk orderId ber-prefix BOOST-.
- * Dipanggil dari membership webhook router jika transaksi membership tidak ketemu.
- * @returns {object|null} boost updated, atau null jika bukan order boost / tidak valid
- */
 async function handlePaymentWebhook(provider, payload) {
   const gateway = PaymentGateway.of(provider);
   const result = gateway.verifyWebhook(payload);
@@ -157,7 +140,7 @@ async function handlePaymentWebhook(provider, payload) {
 
   const orderId = result.orderId || '';
   if (!orderId.startsWith(BOOST_ORDER_PREFIX)) {
-    return null; // bukan order boost
+    return { acknowledged: true, reason: 'NOT_BOOST_ORDER', orderId };
   }
 
   const boostId = orderId.slice(BOOST_ORDER_PREFIX.length);
@@ -167,8 +150,8 @@ async function handlePaymentWebhook(provider, payload) {
   });
 
   if (!boost) {
-    logger.warn('Boost webhook: boost not found', { orderId, boostId });
-    throw ApiError.notFound('Boost transaction not found', ErrorCodes.TRANSACTION_NOT_FOUND);
+    logger.warn('Boost webhook: unknown boost order acknowledged', { orderId, boostId });
+    return { acknowledged: true, reason: 'UNKNOWN_ORDER', orderId };
   }
 
   if (boost.paymentStatus === PaymentStatus.PAID) {
@@ -176,26 +159,64 @@ async function handlePaymentWebhook(provider, payload) {
     return boost;
   }
 
+  if ([PaymentStatus.FAILED, PaymentStatus.EXPIRED].includes(boost.paymentStatus)) {
+    // Terminal non-paid — still allow transition only from PENDING via claim below
+    if (boost.paymentStatus !== PaymentStatus.PENDING) {
+      return boost;
+    }
+  }
+
   if (result.status === PaymentStatus.PAID) {
+    if (!amountsMatch(boost.plan.price, result.grossAmount)) {
+      logger.error('Boost webhook: amount mismatch', {
+        orderId,
+        expected: boost.plan.price,
+        received: result.grossAmount,
+      });
+      throw ApiError.forbidden('Webhook amount mismatch', ErrorCodes.WEBHOOK_INVALID_SIGNATURE);
+    }
+
     const startAt = new Date();
     const expiredAt = computeExpiry(startAt, boost.plan.durationDays);
-    const updated = await prisma.opportunityBoost.update({
-      where: { id: boostId },
+
+    const claimed = await prisma.opportunityBoost.updateMany({
+      where: { id: boostId, paymentStatus: PaymentStatus.PENDING },
       data: {
         paymentStatus: PaymentStatus.PAID,
         startAt,
         expiredAt,
       },
+    });
+
+    if (claimed.count === 0) {
+      return prisma.opportunityBoost.findUnique({
+        where: { id: boostId },
+        include: { plan: true },
+      });
+    }
+
+    logger.info('Boost activated via payment', { boostId, opportunityId: boost.opportunityId });
+    return prisma.opportunityBoost.findUnique({
+      where: { id: boostId },
       include: { plan: true },
     });
-    logger.info('Boost activated via payment', { boostId, opportunityId: boost.opportunityId });
-    return updated;
   }
 
-  if ([PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(result.status)) {
-    return prisma.opportunityBoost.update({
+  // FAILED / EXPIRED — map cancel ke FAILED (enum boost tidak punya CANCELLED)
+  const terminal =
+    result.status === PaymentStatus.FAILED || result.status === PaymentStatus.EXPIRED
+      ? result.status
+      : result.status === 'CANCELLED'
+        ? PaymentStatus.FAILED
+        : null;
+
+  if (terminal) {
+    await prisma.opportunityBoost.updateMany({
+      where: { id: boostId, paymentStatus: PaymentStatus.PENDING },
+      data: { paymentStatus: terminal },
+    });
+    return prisma.opportunityBoost.findUnique({
       where: { id: boostId },
-      data: { paymentStatus: result.status },
       include: { plan: true },
     });
   }
@@ -213,4 +234,5 @@ module.exports = {
   handlePaymentWebhook,
   isBoostOrderId,
   BOOST_ORDER_PREFIX,
+  amountsMatch,
 };

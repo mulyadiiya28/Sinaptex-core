@@ -18,16 +18,26 @@ const getMyMembership = asyncHandler(async (req, res) => {
 const checkout = asyncHandler(async (req, res) => {
   const { planId, voucherCode } = req.body;
   const idempotencyKey = req.headers['idempotency-key'] || undefined;
-  const result = await membershipService.checkout({ profileId: req.profile.id, planId, voucherCode, idempotencyKey });
+  const result = await membershipService.checkout({
+    profileId: req.profile.id,
+    planId,
+    voucherCode,
+    idempotencyKey,
+  });
   return created(res, result, 'Checkout created — arahkan user ke paymentUrl untuk membayar');
 });
 
-// Endpoint publik (dipanggil server payment gateway, bukan user) — tidak pakai
-// requireAuth, keamanan ditegakkan lewat verifikasi signature per-adapter
-// (lihat PaymentGateway.of(provider).verifyWebhook() di membershipService).
-// :provider di path supaya siap multi-gateway tanpa endpoint baru per provider.
+/**
+ * Webhook publik — selalu 200 jika signature valid (termasuk UNKNOWN_ORDER),
+ * supaya Midtrans tidak spam retry. Signature invalid tetap 403.
+ */
 const webhook = asyncHandler(async (req, res) => {
-  await membershipService.handlePaymentWebhook(req.params.provider.toUpperCase(), req.body);
+  const provider = (req.params.provider || 'midtrans').toUpperCase();
+  const result = await membershipService.handlePaymentWebhook(provider, req.body);
+
+  if (result && result.acknowledged) {
+    return success(res, result, 'Webhook acknowledged');
+  }
   return success(res, null, 'Webhook processed');
 });
 
@@ -36,14 +46,30 @@ const listMyTransactions = asyncHandler(async (req, res) => {
   return success(res, transactions);
 });
 
-/** STUB DEV — lihat komentar di membership.service.js. Diblokir keras di production. */
 const devActivate = asyncHandler(async (req, res) => {
   if (env.nodeEnv === 'production') {
-    throw ApiError.forbidden('Dev stub ini dinonaktifkan di production. Gunakan payment gateway sungguhan.', ErrorCodes.FORBIDDEN);
+    throw ApiError.forbidden(
+      'Dev stub ini dinonaktifkan di production. Gunakan payment gateway sungguhan.',
+      ErrorCodes.FORBIDDEN
+    );
   }
   const { durationDays } = req.body;
-  const membership = await membershipService.devActivate({ profileId: req.profile.id, durationDays });
-  return success(res, membership, 'Membership diaktifkan (DEV STUB — bukan lewat payment gateway)');
+  const membership = await membershipService.devActivate({
+    profileId: req.profile.id,
+    durationDays,
+  });
+  return success(
+    res,
+    membership,
+    'Membership diaktifkan (DEV STUB — bukan lewat payment gateway)'
+  );
 });
 
-module.exports = { listPlans, getMyMembership, checkout, webhook, listMyTransactions, devActivate };
+module.exports = {
+  listPlans,
+  getMyMembership,
+  checkout,
+  webhook,
+  listMyTransactions,
+  devActivate,
+};

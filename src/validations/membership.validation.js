@@ -7,10 +7,16 @@ const checkoutSchema = {
   }),
 };
 
-// Webhook body dari payment gateway — passthrough, validasi keamanan ada di
-// signature check per-adapter, bukan di shape body (tiap provider beda field).
+// Webhook body dari payment gateway — passthrough; keamanan di signature adapter
 const webhookSchema = {
-  params: z.object({ provider: z.enum(['midtrans', 'xendit', 'duitku', 'stripe']) }),
+  params: z.object({
+    provider: z.enum(['midtrans', 'xendit', 'duitku', 'stripe']),
+  }),
+  body: z.object({}).passthrough(),
+};
+
+/** Alias route tanpa :provider di path */
+const webhookBodySchema = {
   body: z.object({}).passthrough(),
 };
 
@@ -20,4 +26,9 @@ const devActivateSchema = {
   }),
 };
 
-module.exports = { checkoutSchema, webhookSchema, devActivateSchema };
+module.exports = {
+  checkoutSchema,
+  webhookSchema,
+  webhookBodySchema,
+  devActivateSchema,
+};

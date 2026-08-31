@@ -36,7 +36,11 @@ function mapPaymentMethod(paymentType) {
 
 /** capture/settlement/deny/cancel/expire/pending -> PaymentStatus internal. */
 function mapTransactionStatus(transactionStatus, fraudStatus) {
-  if (transactionStatus === 'capture') return fraudStatus === 'accept' ? PaymentStatus.PAID : PaymentStatus.FAILED;
+  if (transactionStatus === 'capture') {
+    // challenge = menunggu review fraud Midtrans; treat as still pending
+    if (fraudStatus === 'challenge') return PaymentStatus.PENDING;
+    return fraudStatus === 'accept' ? PaymentStatus.PAID : PaymentStatus.FAILED;
+  }
   if (transactionStatus === 'settlement') return PaymentStatus.PAID;
   if (['deny', 'cancel', 'failure'].includes(transactionStatus)) return PaymentStatus.FAILED;
   if (transactionStatus === 'expire') return PaymentStatus.EXPIRED;
@@ -51,7 +55,6 @@ function mapTransactionStatus(transactionStatus, fraudStatus) {
  * @param {{ name: string, email?: string, phone?: string }} params.customer
  * @param {string} params.itemName
  * @returns {Promise<{provider: string, transactionId: string, paymentUrl: string, token: string, expiredAt: Date|null, raw: object}>}
- *   PaymentResult DTO generik — lihat komentar di PaymentGateway.js
  */
 async function createTransaction({ orderId, grossAmount, customer, itemName }) {
   if (!config.serverKey) {
@@ -82,15 +85,14 @@ async function createTransaction({ orderId, grossAmount, customer, itemName }) {
     transactionId: orderId,
     paymentUrl: data.redirect_url,
     token: data.token,
-    expiredAt: null, // Snap default ~24 jam; hitung eksplisit di sini kalau perlu presisi nanti
+    expiredAt: null,
     raw: data,
   };
 }
 
 /**
  * @param {object} payload - body notifikasi webhook mentah dari Midtrans
- * @returns {{valid: boolean, orderId: string, status: string, method: string|null, raw: object}}
- *   WebhookResult DTO generik — status sudah dinormalisasi ke PaymentStatus internal
+ * @returns {{valid: boolean, orderId: string, status: string|null, method: string|null, grossAmount: number|null, raw: object}}
  */
 function verifyWebhook(payload) {
   const {
@@ -101,9 +103,11 @@ function verifyWebhook(payload) {
     transaction_status: transactionStatus,
     fraud_status: fraudStatus,
     payment_type: paymentType,
-  } = payload;
+  } = payload || {};
 
-  if (!config.serverKey) return { valid: false, orderId, status: null, method: null, raw: payload };
+  if (!config.serverKey) {
+    return { valid: false, orderId, status: null, method: null, grossAmount: null, raw: payload };
+  }
 
   const expectedSignature = crypto
     .createHash('sha512')
@@ -111,13 +115,21 @@ function verifyWebhook(payload) {
     .digest('hex');
 
   const valid = expectedSignature === signatureKey;
-  if (!valid) return { valid: false, orderId, status: null, method: null, raw: payload };
+  if (!valid) {
+    return { valid: false, orderId, status: null, method: null, grossAmount: null, raw: payload };
+  }
+
+  const parsedAmount =
+    grossAmount === undefined || grossAmount === null || grossAmount === ''
+      ? null
+      : Number(grossAmount);
 
   return {
     valid: true,
     orderId,
     status: mapTransactionStatus(transactionStatus, fraudStatus),
     method: mapPaymentMethod(paymentType),
+    grossAmount: Number.isFinite(parsedAmount) ? parsedAmount : null,
     raw: payload,
   };
 }

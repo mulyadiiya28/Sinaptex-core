@@ -9,11 +9,11 @@ const DEFAULTS = Object.freeze({
 });
 
 function validatePolicy(policy) {
-  for (const [key, value] of Object.entries(policy)) {
+  Object.entries(policy).forEach(([key, value]) => {
     if (!Number.isInteger(value) || value < 1) {
       throw new Error(`${key} must be a positive integer`);
     }
-  }
+  });
   return policy;
 }
 

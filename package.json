@@ -15,7 +15,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "prepare": "husky || true",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate || true",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:reset": "prisma migrate reset",
@@ -79,10 +79,5 @@
       "eslint --fix",
       "prettier --write"
     ]
-  },
-  "allowScripts": {
-    "@prisma/client@5.22.0": true,
-    "prisma@5.22.0": true,
-    "@prisma/engines@5.22.0": true
   }
 }

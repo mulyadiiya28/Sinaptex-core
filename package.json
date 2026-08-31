@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
-    "build": "prisma generate",
+    "build": "prisma generate && tsc",
     "dev": "node src/server.js",
     "start": "node src/server.js",
     "lint": "eslint \"src/**/*.js\"",

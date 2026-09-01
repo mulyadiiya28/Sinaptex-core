@@ -12,6 +12,10 @@ const chatService = require('../modules/chat/chat.service');
  * Broadcast pesan baru & read-receipt TIDAK dipanggil langsung dari
  * controller/handler — socket.js cukup BERLANGGANAN event dari eventBus.
  *
+ * Heartbeat (Engine.IO):
+ *   Server kirim ping tiap `pingInterval` ms; jika tidak ada pong dalam
+ *   `pingTimeout` ms, koneksi dianggap mati dan dibersihkan (disconnect).
+ *
  * Event WebSocket (client <-> server):
  *   Client -> Server: 'message:send' { conversationId, content }
  *   Client -> Server: 'typing:start' / 'typing:stop' { conversationId }
@@ -28,6 +32,20 @@ const chatService = require('../modules/chat/chat.service');
 const MAX_CONNECTIONS_PER_PROFILE = Math.max(
   1,
   Number(process.env.WS_MAX_CONNECTIONS_PER_PROFILE || 5)
+);
+
+/**
+ * Heartbeat — deteksi koneksi zombie / jaringan putus.
+ * Override via env (nilai dalam milidetik).
+ * Default: ping tiap 25s; tunggu pong max 20s (selaras default Engine.IO, eksplisit untuk ops).
+ */
+const PING_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.WS_PING_INTERVAL_MS || 25_000)
+);
+const PING_TIMEOUT_MS = Math.max(
+  2_000,
+  Number(process.env.WS_PING_TIMEOUT_MS || 20_000)
 );
 
 /** @type {Map<string, Set<string>>} profileId -> Set<socketId> (urutan insert = oldest first) */
@@ -79,7 +97,13 @@ function untrackConnection(profileId, socketId) {
 
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
-    maxHttpBufferSize: 1e6, // 1 MB — batasi frame besar
+    // Heartbeat: server → ping; client harus pong sebelum timeout
+    pingInterval: PING_INTERVAL_MS,
+    pingTimeout: PING_TIMEOUT_MS,
+    // Batasi ukuran frame (1 MB)
+    maxHttpBufferSize: 1e6,
+    // Tutup koneksi upgrade yang tidak selesai
+    connectTimeout: Number(process.env.WS_CONNECT_TIMEOUT_MS || 45_000),
     cors: {
       origin: (origin, callback) => {
         if (isOriginAllowed(origin)) {
@@ -198,11 +222,12 @@ function initSocket(httpServer) {
       }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       untrackConnection(profileId, socket.id);
       logger.info('Socket disconnected', {
         profileId,
         socketId: socket.id,
+        reason,
         activeForProfile: connectionsByProfile.get(profileId)?.size ?? 0,
       });
     });
@@ -210,6 +235,8 @@ function initSocket(httpServer) {
 
   logger.info('Socket.IO initialized', {
     maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
+    pingIntervalMs: PING_INTERVAL_MS,
+    pingTimeoutMs: PING_TIMEOUT_MS,
   });
 
   return io;
@@ -220,4 +247,6 @@ module.exports = {
   /** diekspos untuk test / observability */
   _connectionsByProfile: connectionsByProfile,
   _MAX_CONNECTIONS_PER_PROFILE: MAX_CONNECTIONS_PER_PROFILE,
+  _PING_INTERVAL_MS: PING_INTERVAL_MS,
+  _PING_TIMEOUT_MS: PING_TIMEOUT_MS,
 };

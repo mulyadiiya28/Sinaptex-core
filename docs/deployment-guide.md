@@ -5,6 +5,7 @@
 - Project Supabase (DB + Auth)
 - Akun Cloudinary
 - Env production (lihat `.env.example`) — termasuk `DATABASE_URL` dengan `?pgbouncer=true` jika pakai pooler
+- **Redis (opsional tapi disarankan):** Upstash / Redis Cloud — Hostinger shared biasanya **tidak** menyediakan Redis lokal
 
 ## Deploy manual (generic / Hostinger Node)
 
@@ -38,6 +39,40 @@ Tanpa ini, error berikut akan muncul:
 ```
 
 `postinstall` di package.json sudah berisi `prisma generate`, tapi Hostinger sering melewati postinstall. Build command di atas menjamin client Prisma selalu ter-generate.
+
+## Redis di shared hosting (Hostinger + Upstash)
+
+Shared Node di Hostinger **tidak** menjalankan Redis di `localhost`. Pakai Redis managed:
+
+1. Buat database di [Upstash](https://upstash.com) (region dekat user, mis. Singapore).
+2. Di console, copy **Redis URL** (bukan REST URL):
+   ```text
+   rediss://default:PASSWORD@xxxx.upstash.io:6379
+   ```
+   - Harus `rediss://` (TLS) dan port **6379**.
+3. Di hPanel → Node.js App → **Environment variables**:
+   ```env
+   REDIS_URL=rediss://default:PASSWORD@xxxx.upstash.io:6379
+   CACHE_ENABLED=true
+   CACHE_KEY_PREFIX=sinaptex:
+   ```
+4. **Restart** aplikasi.
+5. Verifikasi: `GET /api/v1/health` → `"redis":"ok"`, `"cache":"ok"`.
+
+Tanpa `REDIS_URL`, API tetap jalan; cache & counter chat memakai fallback (lebih banyak hit DB).
+
+**Keamanan:** jangan commit password Redis ke Git. Jika URL pernah bocor, **reset password** di Upstash lalu update env Hostinger.
+
+Nilai health `checks.redis`:
+
+| Nilai | Arti |
+|-------|------|
+| `ok` | Ping Redis sukses |
+| `not_configured` | `REDIS_URL` kosong |
+| `disabled` | `CACHE_ENABLED=false` |
+| `unavailable` / `error` | Gagal connect (URL/password/TLS) |
+
+`checks.database=error` → HTTP **503**. Redis gagal **tidak** memaksa 503.
 
 ## Scheduler di shared hosting (Hostinger)
 
@@ -118,8 +153,10 @@ Path `hbuilds/versions/<id>` **berubah**. Update baris cron ke version baru, ata
 - [ ] Env production lengkap (`DATABASE_URL` + `pgbouncer=true` jika pooler)
 - [ ] `NODE_ENV=production`
 - [ ] `CLIENT_URL` = domain frontend (CORS)
-- [ ] Migration production sudah jalan
+- [ ] Migration production sudah jalan (termasuk `chat_rate_limit_policies` jika dipakai)
 - [ ] Seed master data (plans, categories) sudah ada
 - [ ] **Build command Hostinger** berisi `npx prisma generate`
+- [ ] **`REDIS_URL`** (Upstash `rediss://...`) + restart → health `redis: ok`
 - [ ] **Cron frequent + daily** terpasang dan path version benar
 - [ ] Uji `node src/jobs/run-once.js --group=daily` sekali lewat SSH
+- [ ] Midtrans webhook URL production mengarah ke `/api/v1/membership/webhook/...`

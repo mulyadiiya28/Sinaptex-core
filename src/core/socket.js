@@ -16,6 +16,10 @@ const chatService = require('../modules/chat/chat.service');
  *   Server kirim ping tiap `pingInterval` ms; jika tidak ada pong dalam
  *   `pingTimeout` ms, koneksi dianggap mati dan dibersihkan (disconnect).
  *
+ * Monitoring:
+ *   getSocketStats() → counters disconnect by reason (in-memory, per process).
+ *   Dipakai health check & debugging proxy/heartbeat.
+ *
  * Event WebSocket (client <-> server):
  *   Client -> Server: 'message:send' { conversationId, content }
  *   Client -> Server: 'typing:start' / 'typing:stop' { conversationId }
@@ -51,6 +55,47 @@ const PING_TIMEOUT_MS = Math.max(
 /** @type {Map<string, Set<string>>} profileId -> Set<socketId> (urutan insert = oldest first) */
 const connectionsByProfile = new Map();
 
+/** Observability — in-memory, reset saat proses restart */
+const stats = {
+  startedAt: new Date().toISOString(),
+  connectsTotal: 0,
+  disconnectsTotal: 0,
+  /** @type {Record<string, number>} */
+  disconnectReasons: Object.create(null),
+  /** @type {Record<string, number>} */
+  authFailures: Object.create(null),
+};
+
+function bumpReason(map, reason) {
+  const key = reason || 'unknown';
+  map[key] = (map[key] || 0) + 1;
+}
+
+/**
+ * Snapshot statistik socket untuk health / admin.
+ * @returns {object}
+ */
+function getSocketStats() {
+  let activeSockets = 0;
+  for (const set of connectionsByProfile.values()) {
+    activeSockets += set.size;
+  }
+  return {
+    startedAt: stats.startedAt,
+    activeSockets,
+    activeProfiles: connectionsByProfile.size,
+    connectsTotal: stats.connectsTotal,
+    disconnectsTotal: stats.disconnectsTotal,
+    disconnectReasons: { ...stats.disconnectReasons },
+    authFailures: { ...stats.authFailures },
+    config: {
+      maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
+      pingIntervalMs: PING_INTERVAL_MS,
+      pingTimeoutMs: PING_TIMEOUT_MS,
+    },
+  };
+}
+
 function trackConnection(profileId, socketId, io) {
   let set = connectionsByProfile.get(profileId);
   if (!set) {
@@ -66,6 +111,8 @@ function trackConnection(profileId, socketId, io) {
     set.delete(oldestId);
 
     if (oldest) {
+      oldest.data = oldest.data || {};
+      oldest.data.evictReason = 'SESSION_REPLACED';
       logger.info('Evicting oldest socket (connection limit)', {
         profileId,
         evictedSocketId: oldestId,
@@ -118,21 +165,32 @@ function initSocket(httpServer) {
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
-      if (!token) return next(new Error('Missing auth token'));
+      if (!token) {
+        bumpReason(stats.authFailures, 'missing_token');
+        return next(new Error('Missing auth token'));
+      }
 
       const { data, error } = await supabaseAdmin.auth.getUser(token);
-      if (error || !data?.user) return next(new Error('Invalid or expired token'));
+      if (error || !data?.user) {
+        bumpReason(stats.authFailures, 'invalid_token');
+        return next(new Error('Invalid or expired token'));
+      }
 
       const user = await prisma.user.findUnique({
         where: { supabaseId: data.user.id },
         include: { profile: true },
       });
-      if (!user?.profile) return next(new Error('Profile not found. Complete registration first.'));
+      if (!user?.profile) {
+        bumpReason(stats.authFailures, 'profile_not_found');
+        return next(new Error('Profile not found. Complete registration first.'));
+      }
 
       socket.profileId = user.profile.id;
       socket.data.token = token;
+      socket.data.connectedAt = Date.now();
       next();
     } catch (err) {
+      bumpReason(stats.authFailures, 'exception');
       next(new Error('Authentication failed'));
     }
   });
@@ -161,10 +219,12 @@ function initSocket(httpServer) {
 
     trackConnection(profileId, socket.id, io);
     socket.join(room);
+    stats.connectsTotal += 1;
 
     logger.info('Socket connected', {
       profileId,
       socketId: socket.id,
+      transport: socket.conn?.transport?.name,
       activeForProfile: connectionsByProfile.get(profileId)?.size ?? 0,
       limit: MAX_CONNECTIONS_PER_PROFILE,
     });
@@ -224,10 +284,24 @@ function initSocket(httpServer) {
 
     socket.on('disconnect', (reason) => {
       untrackConnection(profileId, socket.id);
+
+      // Gabungkan reason Engine.IO + tag internal (session replaced)
+      const evict = socket.data?.evictReason;
+      const normalized = evict ? `${reason}:${evict}` : reason;
+      stats.disconnectsTotal += 1;
+      bumpReason(stats.disconnectReasons, normalized);
+
+      const connectedAt = socket.data?.connectedAt;
+      const durationMs =
+        typeof connectedAt === 'number' ? Math.max(0, Date.now() - connectedAt) : null;
+
       logger.info('Socket disconnected', {
         profileId,
         socketId: socket.id,
-        reason,
+        reason: normalized,
+        engineReason: reason,
+        transport: socket.conn?.transport?.name,
+        durationMs,
         activeForProfile: connectionsByProfile.get(profileId)?.size ?? 0,
       });
     });
@@ -244,6 +318,7 @@ function initSocket(httpServer) {
 
 module.exports = {
   initSocket,
+  getSocketStats,
   /** diekspos untuk test / observability */
   _connectionsByProfile: connectionsByProfile,
   _MAX_CONNECTIONS_PER_PROFILE: MAX_CONNECTIONS_PER_PROFILE,

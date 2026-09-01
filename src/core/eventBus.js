@@ -19,6 +19,9 @@ const EVENTS = {
   // -> Socket (nanti bisa nambah -> Email -> Push tanpa ubah chat.service.js).
   CHAT_MESSAGE_SENT: 'chat.message_sent', // { message, conversationId, senderId, recipientId }
   CHAT_CONVERSATION_READ: 'chat.conversation_read', // { conversationId, readBy, otherParticipantId }
+  // Setelah notification.listener membuat baris Notification, emit event ini agar
+  // socket.js bisa push real-time ke room profile penerima.
+  NOTIFICATION_CREATED: 'notification.created', // { notification }
 };
 
 eventBus.onAny((event, value) => {

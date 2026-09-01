@@ -1,10 +1,12 @@
 const prisma = require('../config/prisma');
 const cache = require('../core/cache');
+const { getSocketStats } = require('../core/socket');
 
 /**
  * GET /api/v1/health
  * - database error → 503 (critical)
  * - redis/cache miss/unavailable → tetap 200 (optional dependency) + checks.redis
+ * - socket stats → informational (disconnect reasons, active connections)
  */
 module.exports = async function healthCheck(req, res) {
   const checks = {
@@ -70,10 +72,18 @@ module.exports = async function healthCheck(req, res) {
     }
   }
 
+  let socket = null;
+  try {
+    socket = getSocketStats();
+  } catch {
+    socket = { error: 'unavailable' };
+  }
+
   const body = {
     success: healthy,
     message: healthy ? 'Sinaptex API is up' : 'Degraded',
     checks,
+    socket,
     timestamp: new Date().toISOString(),
   };
 

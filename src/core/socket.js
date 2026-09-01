@@ -1,3 +1,4 @@
+const zlib = require('zlib');
 const { Server } = require('socket.io');
 const { supabaseAdmin } = require('../config/supabase');
 const prisma = require('../config/prisma');
@@ -9,33 +10,12 @@ const chatService = require('../modules/chat/chat.service');
 /**
  * CHAT + NOTIFICATION WebSocket layer
  * ------------------------------------------------------------------
- * Broadcast pesan baru & read-receipt TIDAK dipanggil langsung dari
- * controller/handler — socket.js cukup BERLANGGANAN event dari eventBus.
- *
- * Heartbeat (Engine.IO):
- *   Server kirim ping tiap `pingInterval` ms; jika tidak ada pong dalam
- *   `pingTimeout` ms, koneksi dianggap mati dan dibersihkan (disconnect).
- *
- * Compression (RFC 7692 permessage-deflate):
- *   Aktif via WS_PER_MESSAGE_DEFLATE (default: true). Hanya frame ≥ threshold
- *   yang dikompresi agar ping/event kecil tidak membuang CPU.
- *
- * Monitoring:
- *   getSocketStats() → counters disconnect by reason (in-memory, per process).
- *
- * Event WebSocket (client <-> server):
- *   Client -> Server: 'message:send' { conversationId, content }
- *   Client -> Server: 'typing:start' / 'typing:stop' { conversationId }
- *   Client -> Server: 'conversation:read' { conversationId }
- *   Server -> Client: 'message:new' <Message>
- *   Server -> Client: 'typing:start' / 'typing:stop' { conversationId, fromProfileId }
- *   Server -> Client: 'conversation:read' { conversationId, readBy }
- *   Server -> Client: 'notification:new' <Notification>
- *   Server -> Client: 'error' { code?, message }
- *   Server -> Client: 'session:replaced'
+ * Compression metrics (aplikasi):
+ *   Mengukur payload outbound JSON vs hasil deflate (level sama dengan config).
+ *   Ini perkiraan rasio wire permessage-deflate — Engine.IO tidak mengekspos
+ *   ukuran frame terkompresi secara publik. Sample rate membatasi CPU.
  */
 
-/** Max koneksi Socket.IO aktif per profileId (per proses Node). */
 const MAX_CONNECTIONS_PER_PROFILE = Math.max(
   1,
   Number(process.env.WS_MAX_CONNECTIONS_PER_PROFILE || 5)
@@ -50,15 +30,19 @@ const PING_TIMEOUT_MS = Math.max(
   Number(process.env.WS_PING_TIMEOUT_MS || 20_000)
 );
 
-/**
- * permessage-deflate — kompresi frame WebSocket (negosiasi otomatis dengan client).
- * Set WS_PER_MESSAGE_DEFLATE=false untuk mematikan (debug / hemat CPU).
- */
 const PER_MESSAGE_DEFLATE_ENABLED = process.env.WS_PER_MESSAGE_DEFLATE !== 'false';
 const PER_MESSAGE_DEFLATE_THRESHOLD = Math.max(
   0,
   Number(process.env.WS_PER_MESSAGE_DEFLATE_THRESHOLD || 1024)
 );
+
+/** 0 = off, 1 = setiap pesan, 0.1 = ~10% sample. Default: 1 (semua) untuk soft-launch. */
+const COMPRESSION_METRICS_SAMPLE_RATE = Math.min(
+  1,
+  Math.max(0, Number(process.env.WS_COMPRESSION_METRICS_SAMPLE_RATE ?? 1))
+);
+
+const ZLIB_LEVEL = 3;
 
 const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
   ? {
@@ -66,12 +50,11 @@ const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
       zlibDeflateOptions: {
         chunkSize: 16 * 1024,
         memLevel: 7,
-        level: 3, // 1=cepat … 9=kecil; 3 = kompromi CPU vs rasio
+        level: ZLIB_LEVEL,
       },
       zlibInflateOptions: {
         chunkSize: 16 * 1024,
       },
-      // Batasi konteks agar memori per-koneksi tidak membengkak
       clientNoContextTakeover: true,
       serverNoContextTakeover: true,
       serverMaxWindowBits: 10,
@@ -79,7 +62,7 @@ const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
     }
   : false;
 
-/** @type {Map<string, Set<string>>} profileId -> Set<socketId> */
+/** @type {Map<string, Set<string>>} */
 const connectionsByProfile = new Map();
 
 const stats = {
@@ -90,11 +73,99 @@ const stats = {
   disconnectReasons: Object.create(null),
   /** @type {Record<string, number>} */
   authFailures: Object.create(null),
+  compression: {
+    outboundMessages: 0,
+    sampledMessages: 0,
+    skippedBelowThreshold: 0,
+    compressedMessages: 0,
+    rawBytes: 0,
+    wireBytes: 0, // setelah deflate bila eligible; else = raw
+    rawBytesCompressedOnly: 0,
+    wireBytesCompressedOnly: 0,
+  },
 };
 
 function bumpReason(map, reason) {
   const key = reason || 'unknown';
   map[key] = (map[key] || 0) + 1;
+}
+
+/**
+ * Catat metrik kompresi untuk satu payload outbound (per emit ke room/socket).
+ * @param {unknown} payload
+ * @param {number} [recipientCount=1] fan-out kasar (berapa kali frame dikirim)
+ */
+function recordOutboundCompression(payload, recipientCount = 1) {
+  const count = Math.max(1, recipientCount || 1);
+  stats.compression.outboundMessages += count;
+
+  if (COMPRESSION_METRICS_SAMPLE_RATE <= 0) return;
+  if (COMPRESSION_METRICS_SAMPLE_RATE < 1 && Math.random() > COMPRESSION_METRICS_SAMPLE_RATE) {
+    return;
+  }
+
+  let raw;
+  try {
+    raw = Buffer.from(JSON.stringify(payload ?? null), 'utf8');
+  } catch {
+    return;
+  }
+
+  const rawLen = raw.length;
+  stats.compression.sampledMessages += count;
+
+  const shouldCompress =
+    PER_MESSAGE_DEFLATE_ENABLED && rawLen >= PER_MESSAGE_DEFLATE_THRESHOLD;
+
+  if (!shouldCompress) {
+    stats.compression.skippedBelowThreshold += count;
+    stats.compression.rawBytes += rawLen * count;
+    stats.compression.wireBytes += rawLen * count;
+    return;
+  }
+
+  let wireLen = rawLen;
+  try {
+    wireLen = zlib.deflateSync(raw, { level: ZLIB_LEVEL }).length;
+  } catch {
+    wireLen = rawLen;
+  }
+
+  stats.compression.compressedMessages += count;
+  stats.compression.rawBytes += rawLen * count;
+  stats.compression.wireBytes += wireLen * count;
+  stats.compression.rawBytesCompressedOnly += rawLen * count;
+  stats.compression.wireBytesCompressedOnly += wireLen * count;
+}
+
+function compressionSnapshot() {
+  const c = stats.compression;
+  const ratioAll =
+    c.rawBytes > 0 ? Number((c.wireBytes / c.rawBytes).toFixed(4)) : null;
+  const ratioCompressedOnly =
+    c.rawBytesCompressedOnly > 0
+      ? Number((c.wireBytesCompressedOnly / c.rawBytesCompressedOnly).toFixed(4))
+      : null;
+  const savedBytes = Math.max(0, c.rawBytes - c.wireBytes);
+  const savedPercent =
+    c.rawBytes > 0 ? Number(((savedBytes / c.rawBytes) * 100).toFixed(2)) : null;
+
+  return {
+    outboundMessages: c.outboundMessages,
+    sampledMessages: c.sampledMessages,
+    skippedBelowThreshold: c.skippedBelowThreshold,
+    compressedMessages: c.compressedMessages,
+    rawBytes: c.rawBytes,
+    wireBytes: c.wireBytes,
+    savedBytes,
+    savedPercent,
+    /** wire/raw untuk semua sample (1 = tidak hemat, 0.5 = setengah ukuran) */
+    ratio: ratioAll,
+    /** wire/raw hanya pesan yang benar-benar di atas threshold */
+    ratioCompressedOnly,
+    sampleRate: COMPRESSION_METRICS_SAMPLE_RATE,
+    note: 'Application-level estimate (JSON + zlib); Engine.IO framing may differ slightly.',
+  };
 }
 
 function getSocketStats() {
@@ -110,14 +181,32 @@ function getSocketStats() {
     disconnectsTotal: stats.disconnectsTotal,
     disconnectReasons: { ...stats.disconnectReasons },
     authFailures: { ...stats.authFailures },
+    compression: compressionSnapshot(),
     config: {
       maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
       pingIntervalMs: PING_INTERVAL_MS,
       pingTimeoutMs: PING_TIMEOUT_MS,
       perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
       perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
+      compressionMetricsSampleRate: COMPRESSION_METRICS_SAMPLE_RATE,
     },
   };
+}
+
+function roomRecipientCount(io, room) {
+  try {
+    const set = io.sockets.adapter.rooms.get(room);
+    return set ? set.size : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** emit ke room + catat metrik kompresi */
+function emitToRoom(io, room, event, payload) {
+  const n = roomRecipientCount(io, room);
+  recordOutboundCompression(payload, n);
+  io.to(room).emit(event, payload);
 }
 
 function trackConnection(profileId, socketId, io) {
@@ -172,7 +261,6 @@ function initSocket(httpServer) {
     pingTimeout: PING_TIMEOUT_MS,
     maxHttpBufferSize: 1e6,
     connectTimeout: Number(process.env.WS_CONNECT_TIMEOUT_MS || 45_000),
-    // WebSocket frame compression (permessage-deflate)
     perMessageDeflate,
     httpCompression: PER_MESSAGE_DEFLATE_ENABLED,
     cors: {
@@ -220,19 +308,22 @@ function initSocket(httpServer) {
   });
 
   eventBus.on(EVENTS.CHAT_MESSAGE_SENT, ({ message, recipientId, senderId }) => {
-    if (recipientId) io.to(`profile:${recipientId}`).emit('message:new', message);
-    io.to(`profile:${senderId}`).emit('message:new', message);
+    if (recipientId) emitToRoom(io, `profile:${recipientId}`, 'message:new', message);
+    emitToRoom(io, `profile:${senderId}`, 'message:new', message);
   });
 
   eventBus.on(EVENTS.CHAT_CONVERSATION_READ, ({ conversationId, readBy, otherParticipantId }) => {
     if (otherParticipantId) {
-      io.to(`profile:${otherParticipantId}`).emit('conversation:read', { conversationId, readBy });
+      emitToRoom(io, `profile:${otherParticipantId}`, 'conversation:read', {
+        conversationId,
+        readBy,
+      });
     }
   });
 
   eventBus.on(EVENTS.NOTIFICATION_CREATED, ({ notification }) => {
     if (!notification?.profileId) return;
-    io.to(`profile:${notification.profileId}`).emit('notification:new', notification);
+    emitToRoom(io, `profile:${notification.profileId}`, 'notification:new', notification);
   });
 
   io.on('connection', (socket) => {
@@ -271,7 +362,7 @@ function initSocket(httpServer) {
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
         const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
-          io.to(`profile:${recipientId}`).emit('typing:start', {
+          emitToRoom(io, `profile:${recipientId}`, 'typing:start', {
             conversationId,
             fromProfileId: profileId,
           });
@@ -286,7 +377,7 @@ function initSocket(httpServer) {
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
         const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
-          io.to(`profile:${recipientId}`).emit('typing:stop', {
+          emitToRoom(io, `profile:${recipientId}`, 'typing:stop', {
             conversationId,
             fromProfileId: profileId,
           });
@@ -334,6 +425,7 @@ function initSocket(httpServer) {
     pingTimeoutMs: PING_TIMEOUT_MS,
     perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
     perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
+    compressionMetricsSampleRate: COMPRESSION_METRICS_SAMPLE_RATE,
   });
 
   return io;

@@ -16,9 +16,12 @@ const chatService = require('../modules/chat/chat.service');
  *   Server kirim ping tiap `pingInterval` ms; jika tidak ada pong dalam
  *   `pingTimeout` ms, koneksi dianggap mati dan dibersihkan (disconnect).
  *
+ * Compression (RFC 7692 permessage-deflate):
+ *   Aktif via WS_PER_MESSAGE_DEFLATE (default: true). Hanya frame ≥ threshold
+ *   yang dikompresi agar ping/event kecil tidak membuang CPU.
+ *
  * Monitoring:
  *   getSocketStats() → counters disconnect by reason (in-memory, per process).
- *   Dipakai health check & debugging proxy/heartbeat.
  *
  * Event WebSocket (client <-> server):
  *   Client -> Server: 'message:send' { conversationId, content }
@@ -29,20 +32,15 @@ const chatService = require('../modules/chat/chat.service');
  *   Server -> Client: 'conversation:read' { conversationId, readBy }
  *   Server -> Client: 'notification:new' <Notification>
  *   Server -> Client: 'error' { code?, message }
- *   Server -> Client: 'session:replaced' (koneksi digantikan karena batas per profile)
+ *   Server -> Client: 'session:replaced'
  */
 
-/** Max koneksi Socket.IO aktif per profileId (per proses Node). Override: WS_MAX_CONNECTIONS_PER_PROFILE */
+/** Max koneksi Socket.IO aktif per profileId (per proses Node). */
 const MAX_CONNECTIONS_PER_PROFILE = Math.max(
   1,
   Number(process.env.WS_MAX_CONNECTIONS_PER_PROFILE || 5)
 );
 
-/**
- * Heartbeat — deteksi koneksi zombie / jaringan putus.
- * Override via env (nilai dalam milidetik).
- * Default: ping tiap 25s; tunggu pong max 20s (selaras default Engine.IO, eksplisit untuk ops).
- */
 const PING_INTERVAL_MS = Math.max(
   5_000,
   Number(process.env.WS_PING_INTERVAL_MS || 25_000)
@@ -52,10 +50,38 @@ const PING_TIMEOUT_MS = Math.max(
   Number(process.env.WS_PING_TIMEOUT_MS || 20_000)
 );
 
-/** @type {Map<string, Set<string>>} profileId -> Set<socketId> (urutan insert = oldest first) */
+/**
+ * permessage-deflate — kompresi frame WebSocket (negosiasi otomatis dengan client).
+ * Set WS_PER_MESSAGE_DEFLATE=false untuk mematikan (debug / hemat CPU).
+ */
+const PER_MESSAGE_DEFLATE_ENABLED = process.env.WS_PER_MESSAGE_DEFLATE !== 'false';
+const PER_MESSAGE_DEFLATE_THRESHOLD = Math.max(
+  0,
+  Number(process.env.WS_PER_MESSAGE_DEFLATE_THRESHOLD || 1024)
+);
+
+const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
+  ? {
+      threshold: PER_MESSAGE_DEFLATE_THRESHOLD,
+      zlibDeflateOptions: {
+        chunkSize: 16 * 1024,
+        memLevel: 7,
+        level: 3, // 1=cepat … 9=kecil; 3 = kompromi CPU vs rasio
+      },
+      zlibInflateOptions: {
+        chunkSize: 16 * 1024,
+      },
+      // Batasi konteks agar memori per-koneksi tidak membengkak
+      clientNoContextTakeover: true,
+      serverNoContextTakeover: true,
+      serverMaxWindowBits: 10,
+      concurrencyLimit: 10,
+    }
+  : false;
+
+/** @type {Map<string, Set<string>>} profileId -> Set<socketId> */
 const connectionsByProfile = new Map();
 
-/** Observability — in-memory, reset saat proses restart */
 const stats = {
   startedAt: new Date().toISOString(),
   connectsTotal: 0,
@@ -71,10 +97,6 @@ function bumpReason(map, reason) {
   map[key] = (map[key] || 0) + 1;
 }
 
-/**
- * Snapshot statistik socket untuk health / admin.
- * @returns {object}
- */
 function getSocketStats() {
   let activeSockets = 0;
   for (const set of connectionsByProfile.values()) {
@@ -92,6 +114,8 @@ function getSocketStats() {
       maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
       pingIntervalMs: PING_INTERVAL_MS,
       pingTimeoutMs: PING_TIMEOUT_MS,
+      perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
+      perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
     },
   };
 }
@@ -144,13 +168,13 @@ function untrackConnection(profileId, socketId) {
 
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
-    // Heartbeat: server → ping; client harus pong sebelum timeout
     pingInterval: PING_INTERVAL_MS,
     pingTimeout: PING_TIMEOUT_MS,
-    // Batasi ukuran frame (1 MB)
     maxHttpBufferSize: 1e6,
-    // Tutup koneksi upgrade yang tidak selesai
     connectTimeout: Number(process.env.WS_CONNECT_TIMEOUT_MS || 45_000),
+    // WebSocket frame compression (permessage-deflate)
+    perMessageDeflate,
+    httpCompression: PER_MESSAGE_DEFLATE_ENABLED,
     cors: {
       origin: (origin, callback) => {
         if (isOriginAllowed(origin)) {
@@ -195,7 +219,6 @@ function initSocket(httpServer) {
     }
   });
 
-  // Chat broadcast
   eventBus.on(EVENTS.CHAT_MESSAGE_SENT, ({ message, recipientId, senderId }) => {
     if (recipientId) io.to(`profile:${recipientId}`).emit('message:new', message);
     io.to(`profile:${senderId}`).emit('message:new', message);
@@ -207,7 +230,6 @@ function initSocket(httpServer) {
     }
   });
 
-  // In-app notification real-time push
   eventBus.on(EVENTS.NOTIFICATION_CREATED, ({ notification }) => {
     if (!notification?.profileId) return;
     io.to(`profile:${notification.profileId}`).emit('notification:new', notification);
@@ -285,7 +307,6 @@ function initSocket(httpServer) {
     socket.on('disconnect', (reason) => {
       untrackConnection(profileId, socket.id);
 
-      // Gabungkan reason Engine.IO + tag internal (session replaced)
       const evict = socket.data?.evictReason;
       const normalized = evict ? `${reason}:${evict}` : reason;
       stats.disconnectsTotal += 1;
@@ -311,6 +332,8 @@ function initSocket(httpServer) {
     maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
     pingIntervalMs: PING_INTERVAL_MS,
     pingTimeoutMs: PING_TIMEOUT_MS,
+    perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
+    perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
   });
 
   return io;
@@ -319,9 +342,9 @@ function initSocket(httpServer) {
 module.exports = {
   initSocket,
   getSocketStats,
-  /** diekspos untuk test / observability */
   _connectionsByProfile: connectionsByProfile,
   _MAX_CONNECTIONS_PER_PROFILE: MAX_CONNECTIONS_PER_PROFILE,
   _PING_INTERVAL_MS: PING_INTERVAL_MS,
   _PING_TIMEOUT_MS: PING_TIMEOUT_MS,
+  _PER_MESSAGE_DEFLATE_ENABLED: PER_MESSAGE_DEFLATE_ENABLED,
 };

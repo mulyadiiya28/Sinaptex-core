@@ -20,11 +20,66 @@ const chatService = require('../modules/chat/chat.service');
  *   Server -> Client: 'typing:start' / 'typing:stop' { conversationId, fromProfileId }
  *   Server -> Client: 'conversation:read' { conversationId, readBy }
  *   Server -> Client: 'notification:new' <Notification>
- *   Server -> Client: 'error' { message }
+ *   Server -> Client: 'error' { code?, message }
+ *   Server -> Client: 'session:replaced' (koneksi digantikan karena batas per profile)
  */
+
+/** Max koneksi Socket.IO aktif per profileId (per proses Node). Override: WS_MAX_CONNECTIONS_PER_PROFILE */
+const MAX_CONNECTIONS_PER_PROFILE = Math.max(
+  1,
+  Number(process.env.WS_MAX_CONNECTIONS_PER_PROFILE || 5)
+);
+
+/** @type {Map<string, Set<string>>} profileId -> Set<socketId> (urutan insert = oldest first) */
+const connectionsByProfile = new Map();
+
+function trackConnection(profileId, socketId, io) {
+  let set = connectionsByProfile.get(profileId);
+  if (!set) {
+    set = new Set();
+    connectionsByProfile.set(profileId, set);
+  }
+
+  while (set.size >= MAX_CONNECTIONS_PER_PROFILE) {
+    const oldestId = set.values().next().value;
+    if (!oldestId) break;
+
+    const oldest = io.sockets.sockets.get(oldestId);
+    set.delete(oldestId);
+
+    if (oldest) {
+      logger.info('Evicting oldest socket (connection limit)', {
+        profileId,
+        evictedSocketId: oldestId,
+        limit: MAX_CONNECTIONS_PER_PROFILE,
+      });
+      oldest.emit('session:replaced', {
+        code: 'SESSION_REPLACED',
+        message: 'Sesi digantikan karena batas koneksi perangkat/tab.',
+      });
+      oldest.emit('error', {
+        code: 'SESSION_REPLACED',
+        message: 'Sesi digantikan karena batas koneksi perangkat/tab.',
+      });
+      oldest.disconnect(true);
+    }
+  }
+
+  set.add(socketId);
+}
+
+function untrackConnection(profileId, socketId) {
+  const set = connectionsByProfile.get(profileId);
+  if (!set) return;
+  set.delete(socketId);
+  if (set.size === 0) {
+    connectionsByProfile.delete(profileId);
+  }
+}
 
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
+    maxHttpBufferSize: 1e6, // 1 MB — batasi frame besar
     cors: {
       origin: (origin, callback) => {
         if (isOriginAllowed(origin)) {
@@ -51,6 +106,7 @@ function initSocket(httpServer) {
       if (!user?.profile) return next(new Error('Profile not found. Complete registration first.'));
 
       socket.profileId = user.profile.id;
+      socket.data.token = token;
       next();
     } catch (err) {
       next(new Error('Authentication failed'));
@@ -76,15 +132,24 @@ function initSocket(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    const room = `profile:${socket.profileId}`;
+    const profileId = socket.profileId;
+    const room = `profile:${profileId}`;
+
+    trackConnection(profileId, socket.id, io);
     socket.join(room);
-    logger.info('Socket connected', { profileId: socket.profileId, socketId: socket.id });
+
+    logger.info('Socket connected', {
+      profileId,
+      socketId: socket.id,
+      activeForProfile: connectionsByProfile.get(profileId)?.size ?? 0,
+      limit: MAX_CONNECTIONS_PER_PROFILE,
+    });
 
     socket.on('message:send', async ({ conversationId, content }, ack) => {
       try {
         const result = await chatService.sendMessage({
           conversationId,
-          senderId: socket.profileId,
+          senderId: profileId,
           type: 'TEXT',
           content,
         });
@@ -98,9 +163,12 @@ function initSocket(httpServer) {
     socket.on('typing:start', async ({ conversationId }) => {
       try {
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
-        const recipientId = participantIds.find((id) => id !== socket.profileId);
+        const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
-          io.to(`profile:${recipientId}`).emit('typing:start', { conversationId, fromProfileId: socket.profileId });
+          io.to(`profile:${recipientId}`).emit('typing:start', {
+            conversationId,
+            fromProfileId: profileId,
+          });
         }
       } catch {
         // non-critical
@@ -110,9 +178,12 @@ function initSocket(httpServer) {
     socket.on('typing:stop', async ({ conversationId }) => {
       try {
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
-        const recipientId = participantIds.find((id) => id !== socket.profileId);
+        const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
-          io.to(`profile:${recipientId}`).emit('typing:stop', { conversationId, fromProfileId: socket.profileId });
+          io.to(`profile:${recipientId}`).emit('typing:stop', {
+            conversationId,
+            fromProfileId: profileId,
+          });
         }
       } catch {
         // non-critical
@@ -121,18 +192,32 @@ function initSocket(httpServer) {
 
     socket.on('conversation:read', async ({ conversationId }) => {
       try {
-        await chatService.markAsRead({ conversationId, profileId: socket.profileId });
+        await chatService.markAsRead({ conversationId, profileId });
       } catch (err) {
         socket.emit('error', { message: err.message });
       }
     });
 
     socket.on('disconnect', () => {
-      logger.info('Socket disconnected', { profileId: socket.profileId, socketId: socket.id });
+      untrackConnection(profileId, socket.id);
+      logger.info('Socket disconnected', {
+        profileId,
+        socketId: socket.id,
+        activeForProfile: connectionsByProfile.get(profileId)?.size ?? 0,
+      });
     });
+  });
+
+  logger.info('Socket.IO initialized', {
+    maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
   });
 
   return io;
 }
 
-module.exports = { initSocket };
+module.exports = {
+  initSocket,
+  /** diekspos untuk test / observability */
+  _connectionsByProfile: connectionsByProfile,
+  _MAX_CONNECTIONS_PER_PROFILE: MAX_CONNECTIONS_PER_PROFILE,
+};

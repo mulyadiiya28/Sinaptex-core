@@ -26,7 +26,9 @@ const createReview = asyncHandler(async (req, res) => {
   });
 
   const revieweeParty =
-    deal.invitation.fromParty.ownerId === revieweeId ? deal.invitation.fromPartyId : deal.invitation.toPartyId;
+    deal.invitation.fromParty.ownerId === revieweeId
+      ? deal.invitation.fromPartyId
+      : deal.invitation.toPartyId;
   await recomputePartyStats(revieweeParty);
 
   eventBus.emit(EVENTS.REVIEW_CREATED, {

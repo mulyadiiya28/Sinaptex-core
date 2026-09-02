@@ -130,7 +130,7 @@ async function computeMatchingResults(source, limit) {
 
 const runMatching = asyncHandler(async (req, res) => {
   const limit = Number(req.query.limit) || 20;
-  const opportunityId = req.params.opportunityId;
+  const { opportunityId } = req.params;
 
   const source = await prisma.opportunity.findUnique({
     where: { id: opportunityId },

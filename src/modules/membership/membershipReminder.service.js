@@ -3,6 +3,19 @@ const logger = require('../../core/logger');
 const constants = require('../../shared/constants');
 const { sendEmail } = require('../../utils/mailer');
 
+function startOfDayPlus(base, days) {
+  const d = new Date(base);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function endOfDayPlus(base, days) {
+  const d = startOfDayPlus(base, days);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
 /**
  * Kirim pengingat membership H-3 dan H-1 (Asia/Jakarta calendar day).
  * Idempotent: cek notifikasi sejenis pada hari yang sama sebelum create.
@@ -34,7 +47,7 @@ async function sendMembershipExpiryReminders(options = {}) {
 
     await memberships.reduce(async (chain, membership) => {
       await chain;
-      const profileId = membership.profileId;
+      const { profileId } = membership;
       const type = daysLeft === 1 ? 'MEMBERSHIP_REMINDER_H1' : 'MEMBERSHIP_REMINDER_H3';
       const dayStart = startOfDayPlus(asOf, 0);
 
@@ -97,19 +110,6 @@ async function sendMembershipExpiryReminders(options = {}) {
 
   logger.info('Membership expiry reminders done', { totalNotified, detailsCount: details.length });
   return { totalNotified, details };
-}
-
-function startOfDayPlus(base, days) {
-  const d = new Date(base);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-function endOfDayPlus(base, days) {
-  const d = startOfDayPlus(base, days);
-  d.setHours(23, 59, 59, 999);
-  return d;
 }
 
 module.exports = {

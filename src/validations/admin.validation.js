@@ -15,10 +15,15 @@ const listUsersSchema = {
 
 const suspendUserSchema = {
   params: z.object({ id: z.string().uuid() }),
-  body: z.object({
-    accountStatus: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']),
-    reason: z.string().max(500).optional(),
-  }),
+  body: z
+    .object({
+      accountStatus: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']),
+      reason: z.string().max(500).optional(),
+    })
+    .refine((data) => data.accountStatus === 'ACTIVE' || Boolean(data.reason && data.reason.trim()), {
+      message: 'Alasan diperlukan untuk status SUSPENDED atau BANNED',
+      path: ['reason'],
+    }),
 };
 
 const listOpportunitiesModerationSchema = {
@@ -47,10 +52,15 @@ const listReviewsModerationSchema = {
 
 const setReviewVisibilitySchema = {
   params: z.object({ id: z.string().uuid() }),
-  body: z.object({
-    hidden: z.boolean(),
-    hiddenReason: z.string().max(500).optional(),
-  }),
+  body: z
+    .object({
+      hidden: z.boolean(),
+      hiddenReason: z.string().max(500).optional(),
+    })
+    .refine((data) => !data.hidden || Boolean(data.hiddenReason && data.hiddenReason.trim()), {
+      message: 'hiddenReason diperlukan ketika review disembunyikan',
+      path: ['hiddenReason'],
+    }),
 };
 
 const listReportsSchema = {

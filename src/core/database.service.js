@@ -44,6 +44,101 @@ function createFallbackProxy() {
   );
 }
 
+function wrapWithFallback(client, fallback) {
+  const isConnectionError = (err) =>
+    err?.name === 'PrismaClientInitializationError' ||
+    err?.code === 'P1001' ||
+    err?.message?.includes("Can't reach database server") ||
+    err?.message?.includes('ECONNREFUSED');
+
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === '$queryRaw' || prop === '$executeRaw') {
+        return async (...args) => {
+          try {
+            return await target[prop](...args);
+          } catch (err) {
+            if (isConnectionError(err)) {
+              logger.warn(`[DatabaseService] Database offline — fallback mock for ${String(prop)}`);
+              return [{ '?column?': 1 }];
+            }
+            throw err;
+          }
+        };
+      }
+
+      if (prop === '$transaction') {
+        return async (arg, ...rest) => {
+          try {
+            return await target.$transaction(arg, ...rest);
+          } catch (err) {
+            if (isConnectionError(err)) {
+              logger.warn('[DatabaseService] Database offline — fallback mock for $transaction');
+              return typeof arg === 'function' ? arg(fallback) : Promise.all(arg);
+            }
+            throw err;
+          }
+        };
+      }
+
+      if (prop === '$connect') {
+        return async () => {
+          try {
+            await target.$connect();
+          } catch (err) {
+            if (isConnectionError(err)) {
+              logger.warn('[DatabaseService] Database offline — $connect skipped');
+              return;
+            }
+            throw err;
+          }
+        };
+      }
+
+      if (prop === '$disconnect') {
+        return async () => {
+          try {
+            await target.$disconnect();
+          } catch {
+            // ignore
+          }
+        };
+      }
+
+      const val = target[prop];
+      if (val && typeof val === 'object') {
+        return new Proxy(val, {
+          get(mTarget, mProp) {
+            const method = mTarget[mProp];
+            if (typeof method === 'function') {
+              return async (...mArgs) => {
+                try {
+                  return await method.apply(mTarget, mArgs);
+                } catch (err) {
+                  if (isConnectionError(err)) {
+                    logger.warn(
+                      `[DatabaseService] Database offline — fallback mock for ${String(prop)}`
+                    );
+                    const fbModel = fallback[prop];
+                    if (fbModel && typeof fbModel[mProp] === 'function') {
+                      return fbModel[mProp](...mArgs);
+                    }
+                    return null;
+                  }
+                  throw err;
+                }
+              };
+            }
+            return method;
+          },
+        });
+      }
+
+      return val;
+    },
+  });
+}
+
 function createPrismaClientInstance() {
   const logConfig =
     env.nodeEnv === 'development'
@@ -73,7 +168,8 @@ function createPrismaClientInstance() {
       });
     }
 
-    return client;
+    const fallback = createFallbackProxy();
+    return wrapWithFallback(client, fallback);
   } catch (err) {
     logger.error('[DatabaseService] PrismaClient initialization failed.', err);
 

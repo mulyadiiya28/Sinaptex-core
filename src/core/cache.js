@@ -5,7 +5,6 @@ const logger = require('./logger');
 
 let client = null;
 let connectionFailed = false;
-let initAttempted = false;
 
 function shouldUseRedis() {
   const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
@@ -19,7 +18,6 @@ function shouldUseRedis() {
 function getClient() {
   if (!shouldUseRedis() || connectionFailed) return null;
   if (!client) {
-    initAttempted = true;
     client = new Redis(redisConfig.url, {
       ...redisConfig.options,
       lazyConnect: true,
@@ -182,6 +180,5 @@ module.exports = {
   _resetForTests() {
     client = null;
     connectionFailed = false;
-    initAttempted = false;
   },
 };

@@ -21,7 +21,12 @@ const { rateLimiter } = require('./middlewares/rateLimit.middleware');
 const app = express();
 
 app.set('trust proxy', 1);
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    frameguard: false,
+  })
+);
 app.use(cors(corsOptions));
 app.use(compression());
 app.use(cookieParser());

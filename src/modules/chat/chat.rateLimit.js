@@ -68,6 +68,14 @@ function newConversationRedisKey(profileId, dayKey = jakartaDayKey()) {
   return `rl:chat:conv:${profileId}:${dayKey}`;
 }
 
+function secondsUntilJakartaMidnight() {
+  const now = new Date();
+  const day = jakartaDayKey(now);
+  const nextMidnight = new Date(`${day}T00:00:00+07:00`);
+  nextMidnight.setDate(nextMidnight.getDate() + 1);
+  return Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1000));
+}
+
 async function redisGetCount(key) {
   const client = getRedis();
   if (!client) return null;
@@ -144,14 +152,6 @@ async function recordNewConversation(profileId) {
     logger.debug('Chat rate-limit: Redis incr skipped, DB fallback active', { profileId });
   }
   return count;
-}
-
-function secondsUntilJakartaMidnight() {
-  const now = new Date();
-  const day = jakartaDayKey(now);
-  const nextMidnight = new Date(`${day}T00:00:00+07:00`);
-  nextMidnight.setDate(nextMidnight.getDate() + 1);
-  return Math.max(1, Math.ceil((nextMidnight.getTime() - now.getTime()) / 1000));
 }
 
 async function assertUnrepliedBurst(conversationId, senderId) {

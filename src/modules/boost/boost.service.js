@@ -203,12 +203,12 @@ async function handlePaymentWebhook(provider, payload) {
   }
 
   // FAILED / EXPIRED — map cancel ke FAILED (enum boost tidak punya CANCELLED)
-  const terminal =
-    result.status === PaymentStatus.FAILED || result.status === PaymentStatus.EXPIRED
-      ? result.status
-      : result.status === 'CANCELLED'
-        ? PaymentStatus.FAILED
-        : null;
+  let terminal = null;
+  if (result.status === PaymentStatus.FAILED || result.status === PaymentStatus.EXPIRED) {
+    terminal = result.status;
+  } else if (result.status === 'CANCELLED') {
+    terminal = PaymentStatus.FAILED;
+  }
 
   if (terminal) {
     await prisma.opportunityBoost.updateMany({

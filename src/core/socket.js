@@ -170,9 +170,9 @@ function compressionSnapshot() {
 
 function getSocketStats() {
   let activeSockets = 0;
-  for (const set of connectionsByProfile.values()) {
+  Array.from(connectionsByProfile.values()).forEach((set) => {
     activeSockets += set.size;
-  }
+  });
   return {
     startedAt: stats.startedAt,
     activeSockets,
@@ -327,7 +327,7 @@ function initSocket(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    const profileId = socket.profileId;
+    const { profileId } = socket;
     const room = `profile:${profileId}`;
 
     trackConnection(profileId, socket.id, io);

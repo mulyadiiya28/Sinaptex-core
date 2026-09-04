@@ -6,7 +6,7 @@ const logger = require('../core/logger');
 
 let redisClient = null;
 
-// Helper untuk otomatis menambahkan scheme 'rediss://' jika URL diawali '//'
+// Helper to automatically prepend 'rediss://' scheme if URL starts with '//'
 const sanitizeRedisUrl = (rawUrl) => {
   if (!rawUrl) return rawUrl;
   if (rawUrl.startsWith('//')) {
@@ -29,25 +29,37 @@ if (process.env.NODE_ENV === 'production' && !hasExplicitRedis) {
   );
 }
 
+function getOrCreateRedisClient() {
+  if (redisClient) return redisClient;
+
+  const Redis = require('ioredis');
+  
+  redisClient = new Redis(activeRedisUrl, {
+    ...redisConfig.options,
+    enableOfflineQueue: true,
+    // Fix 1: Set to null so ioredis queues commands during connection hiccups 
+    // instead of throwing MaxRetriesPerRequestError
+    maxRetriesPerRequest: null,
+    // Fix 2: Keep TLS/TCP socket active to prevent ECONNRESET drops
+    keepAlive: 10000,
+    // Fix 3: Reconnect indefinitely with smooth backoff rather than aborting after 3 tries
+    retryStrategy: (times) => Math.min(times * 100, 3000),
+  });
+
+  redisClient.on('error', (err) => {
+    logger.warn('Rate-limit Redis connection warning', { error: err.message });
+  });
+
+  return redisClient;
+}
+
 function createRedisStore(prefix) {
   if (!hasExplicitRedis || isTestEnv) return undefined;
   try {
-    if (!redisClient) {
-      const Redis = require('ioredis');
-      redisClient = new Redis(activeRedisUrl, {
-        ...redisConfig.options,
-        enableOfflineQueue: true, // Diaktifkan agar command tidak dibuang saat koneksi awal sedang diproses
-        maxRetriesPerRequest: 1,
-        retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
-      });
-
-      redisClient.on('error', (err) => {
-        logger.warn('Rate-limit Redis connection warning', { error: err.message });
-      });
-    }
+    const client = getOrCreateRedisClient();
 
     return new RedisStore({
-      sendCommand: (...args) => redisClient.call(...args),
+      sendCommand: (...args) => client.call(...args),
       prefix,
     });
   } catch (err) {
@@ -63,7 +75,7 @@ function makeLimiter({ windowMs, max, prefix, message }) {
     standardHeaders: true,
     legacyHeaders: false,
     store: createRedisStore(prefix),
-    // Menggunakan ipKeyGenerator untuk penanganan IPv6 yang aman
+    // Using ipKeyGenerator for safe IPv6 handling
     keyGenerator: (req) => {
       const uid = req.profile?.id || req.user?.id || req.supabaseUser?.id;
       return uid ? `u:${uid}` : `ip:${ipKeyGenerator(req.ip)}`;

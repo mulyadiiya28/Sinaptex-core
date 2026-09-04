@@ -15,6 +15,48 @@ function generateReference(prefix = 'ESC') {
 }
 
 /**
+ * Fail-closed ownership assertion.
+ * Internal/system callers must explicitly pass isSystemCall: true.
+ * Default is safe (requires a valid callerProfileId that matches ownerId).
+ */
+function assertOwnerOrSystem(ownerId, callerProfileId, { isSystemCall = false } = {}) {
+  if (isSystemCall) return;
+  if (!callerProfileId) {
+    throw ApiError.unauthorized(
+      'Missing caller identity for escrow operation',
+      ErrorCodes.UNAUTHORIZED
+    );
+  }
+  if (ownerId !== callerProfileId) {
+    throw ApiError.forbidden(
+      'Only the party owner can perform this escrow action',
+      ErrorCodes.ESCROW_UNAUTHORIZED
+    );
+  }
+}
+
+/**
+ * Fail-closed participant assertion (buyer OR seller).
+ */
+function assertParticipantOrSystem(escrow, callerProfileId, { isSystemCall = false } = {}) {
+  if (isSystemCall) return;
+  if (!callerProfileId) {
+    throw ApiError.unauthorized(
+      'Missing caller identity for escrow operation',
+      ErrorCodes.UNAUTHORIZED
+    );
+  }
+  const isBuyer = escrow.buyerParty?.ownerId === callerProfileId;
+  const isSeller = escrow.sellerParty?.ownerId === callerProfileId;
+  if (!isBuyer && !isSeller) {
+    throw ApiError.forbidden(
+      'You are not an authorized participant in this escrow transaction',
+      ErrorCodes.ESCROW_UNAUTHORIZED
+    );
+  }
+}
+
+/**
  * Helper to dispatch notification and email safely.
  */
 async function notifyEscrowParticipant({ profileId, email, type, title, message, data = {} }) {
@@ -65,6 +107,7 @@ async function initiateHold({
   notes = null,
   metadata = null,
   callerProfileId = null,
+  isSystemCall = false,
 }) {
   if (!buyerPartyId || !sellerPartyId) {
     throw ApiError.badRequest(
@@ -106,12 +149,7 @@ async function initiateHold({
     throw ApiError.notFound('Seller party not found', ErrorCodes.NOT_FOUND);
   }
 
-  if (callerProfileId && buyerParty.ownerId !== callerProfileId) {
-    throw ApiError.forbidden(
-      'Only the owner of the buyer party can initiate an escrow hold',
-      ErrorCodes.ESCROW_PARTY_MISMATCH
-    );
-  }
+  assertOwnerOrSystem(buyerParty.ownerId, callerProfileId, { isSystemCall });
 
   if (dealId) {
     const deal = await prisma.deal.findUnique({ where: { id: dealId } });
@@ -175,7 +213,12 @@ async function initiateHold({
  * 2. Final Release of Funds
  * Releases the escrow balance to the seller's account.
  */
-async function releaseFunds({ escrowId, callerProfileId = null, notes = null }) {
+async function releaseFunds({
+  escrowId,
+  callerProfileId = null,
+  notes = null,
+  isSystemCall = false,
+}) {
   const escrow = await prisma.escrowTransaction.findUnique({
     where: { id: escrowId },
     include: {
@@ -189,12 +232,7 @@ async function releaseFunds({ escrowId, callerProfileId = null, notes = null }) 
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
-  if (callerProfileId && escrow.buyerParty.ownerId !== callerProfileId) {
-    throw ApiError.forbidden(
-      'Only the buyer party owner or authorized authority can release escrow funds',
-      ErrorCodes.ESCROW_UNAUTHORIZED
-    );
-  }
+  assertOwnerOrSystem(escrow.buyerParty.ownerId, callerProfileId, { isSystemCall });
 
   const allowedStatuses = ['HELD', 'BUYER_CONFIRMED', 'SELLER_CONFIRMED'];
   if (!allowedStatuses.includes(escrow.status)) {
@@ -269,7 +307,13 @@ async function releaseFunds({ escrowId, callerProfileId = null, notes = null }) 
  * 3. Seller Confirmation (Fulfillment / Dispatch)
  * Indicates the seller has delivered or fulfilled their side of the agreement.
  */
-async function confirmBySeller({ escrowId, callerProfileId, notes = null, metadata = null }) {
+async function confirmBySeller({
+  escrowId,
+  callerProfileId = null,
+  notes = null,
+  metadata = null,
+  isSystemCall = false,
+}) {
   const escrow = await prisma.escrowTransaction.findUnique({
     where: { id: escrowId },
     include: {
@@ -283,12 +327,7 @@ async function confirmBySeller({ escrowId, callerProfileId, notes = null, metada
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
-  if (callerProfileId && escrow.sellerParty.ownerId !== callerProfileId) {
-    throw ApiError.forbidden(
-      'Only the seller party owner can confirm fulfillment',
-      ErrorCodes.ESCROW_UNAUTHORIZED
-    );
-  }
+  assertOwnerOrSystem(escrow.sellerParty.ownerId, callerProfileId, { isSystemCall });
 
   if (escrow.status !== 'HELD' && escrow.status !== 'BUYER_CONFIRMED') {
     throw ApiError.badRequest(
@@ -336,7 +375,13 @@ async function confirmBySeller({ escrowId, callerProfileId, notes = null, metada
  * 4. Buyer Confirmation (Receipt / Acceptance)
  * Indicates the buyer has received and inspected the delivered goods or services.
  */
-async function confirmByBuyer({ escrowId, callerProfileId, notes = null, autoRelease = false }) {
+async function confirmByBuyer({
+  escrowId,
+  callerProfileId = null,
+  notes = null,
+  autoRelease = false,
+  isSystemCall = false,
+}) {
   const escrow = await prisma.escrowTransaction.findUnique({
     where: { id: escrowId },
     include: {
@@ -350,12 +395,7 @@ async function confirmByBuyer({ escrowId, callerProfileId, notes = null, autoRel
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
-  if (callerProfileId && escrow.buyerParty.ownerId !== callerProfileId) {
-    throw ApiError.forbidden(
-      'Only the buyer party owner can confirm delivery acceptance',
-      ErrorCodes.ESCROW_UNAUTHORIZED
-    );
-  }
+  assertOwnerOrSystem(escrow.buyerParty.ownerId, callerProfileId, { isSystemCall });
 
   if (escrow.status !== 'HELD' && escrow.status !== 'SELLER_CONFIRMED') {
     throw ApiError.badRequest(
@@ -406,7 +446,12 @@ async function confirmByBuyer({ escrowId, callerProfileId, notes = null, autoRel
  * 5. Refund Escrow
  * Returns held funds back to the buyer.
  */
-async function refundEscrow({ escrowId, callerProfileId = null, reason = 'Mutual cancellation' }) {
+async function refundEscrow({
+  escrowId,
+  callerProfileId = null,
+  reason = 'Mutual cancellation',
+  isSystemCall = false,
+}) {
   const escrow = await prisma.escrowTransaction.findUnique({
     where: { id: escrowId },
     include: {
@@ -420,15 +465,7 @@ async function refundEscrow({ escrowId, callerProfileId = null, reason = 'Mutual
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
-  const isSeller = escrow.sellerParty.ownerId === callerProfileId;
-  const isBuyer = escrow.buyerParty.ownerId === callerProfileId;
-
-  if (callerProfileId && !isSeller && !isBuyer) {
-    throw ApiError.forbidden(
-      'Unauthorized to trigger refund for this escrow',
-      ErrorCodes.ESCROW_UNAUTHORIZED
-    );
-  }
+  assertParticipantOrSystem(escrow, callerProfileId, { isSystemCall });
 
   const refundableStatuses = [
     'HELD',
@@ -496,7 +533,12 @@ async function refundEscrow({ escrowId, callerProfileId = null, reason = 'Mutual
  * 6. Dispute Escrow
  * Flags escrow for dispute resolution.
  */
-async function disputeEscrow({ escrowId, callerProfileId, disputeReason }) {
+async function disputeEscrow({
+  escrowId,
+  callerProfileId = null,
+  disputeReason,
+  isSystemCall = false,
+}) {
   if (!disputeReason) {
     throw ApiError.badRequest('Dispute reason is required', ErrorCodes.VALIDATION_ERROR);
   }
@@ -514,12 +556,7 @@ async function disputeEscrow({ escrowId, callerProfileId, disputeReason }) {
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
-  const isBuyer = escrow.buyerParty.ownerId === callerProfileId;
-  const isSeller = escrow.sellerParty.ownerId === callerProfileId;
-
-  if (callerProfileId && !isBuyer && !isSeller) {
-    throw ApiError.forbidden('Only participants can raise a dispute', ErrorCodes.ESCROW_UNAUTHORIZED);
-  }
+  assertParticipantOrSystem(escrow, callerProfileId, { isSystemCall });
 
   if (escrow.status === 'RELEASED' || escrow.status === 'REFUNDED' || escrow.status === 'CANCELLED') {
     throw ApiError.badRequest(
@@ -550,8 +587,9 @@ async function disputeEscrow({ escrowId, callerProfileId, disputeReason }) {
 
 /**
  * 7. Get Escrow By ID
+ * Authorization: caller must be a participant (buyer/seller owner) unless isAdmin.
  */
-async function getEscrowById(escrowId) {
+async function getEscrowById(escrowId, { callerProfileId = null, isAdmin = false } = {}) {
   const escrow = await prisma.escrowTransaction.findUnique({
     where: { id: escrowId },
     include: {
@@ -583,11 +621,31 @@ async function getEscrowById(escrowId) {
     throw ApiError.notFound('Escrow transaction not found', ErrorCodes.ESCROW_NOT_FOUND);
   }
 
+  if (!isAdmin) {
+    if (!callerProfileId) {
+      throw ApiError.unauthorized(
+        'Missing caller identity for escrow operation',
+        ErrorCodes.UNAUTHORIZED
+      );
+    }
+    const isParticipant =
+      escrow.buyerParty.ownerId === callerProfileId ||
+      escrow.sellerParty.ownerId === callerProfileId;
+    if (!isParticipant) {
+      throw ApiError.forbidden(
+        'You are not an authorized participant in this escrow transaction',
+        ErrorCodes.ESCROW_UNAUTHORIZED
+      );
+    }
+  }
+
   return escrow;
 }
 
 /**
  * 8. List Escrows with filters & pagination
+ * Always scopes results to the caller's profileId.
+ * partyId is an additional filter only after ownership is verified.
  */
 async function listEscrowTransactions({
   partyId = null,
@@ -605,13 +663,32 @@ async function listEscrowTransactions({
     where.status = status;
   }
 
-  if (partyId) {
-    where.OR = [{ buyerPartyId: partyId }, { sellerPartyId: partyId }];
-  } else if (profileId) {
+  // Always scope to caller's profile first — never allow unscoped listing.
+  if (profileId) {
     where.OR = [
       { buyerParty: { ownerId: profileId } },
       { sellerParty: { ownerId: profileId } },
     ];
+  }
+
+  if (partyId) {
+    // partyId is only allowed as an additional filter when the caller owns that party.
+    if (profileId) {
+      const owns = await prisma.party.findFirst({
+        where: { id: partyId, ownerId: profileId },
+        select: { id: true },
+      });
+      if (!owns) {
+        throw ApiError.forbidden(
+          'You do not own the specified party',
+          ErrorCodes.ESCROW_PARTY_MISMATCH
+        );
+      }
+    }
+    // Narrow to the specific party while remaining inside the ownership scope.
+    where.AND = [{ OR: [{ buyerPartyId: partyId }, { sellerPartyId: partyId }] }];
+    // Prefer the more specific party filter; ownership already verified above.
+    delete where.OR;
   }
 
   const [items, total] = await Promise.all([
@@ -646,6 +723,8 @@ async function listEscrowTransactions({
 
 module.exports = {
   generateReference,
+  assertOwnerOrSystem,
+  assertParticipantOrSystem,
   initiateHold,
   confirmBySeller,
   confirmByBuyer,

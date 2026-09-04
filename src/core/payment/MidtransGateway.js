@@ -114,7 +114,11 @@ function verifyWebhook(payload) {
     .update(`${orderId}${statusCode}${grossAmount}${config.serverKey}`)
     .digest('hex');
 
-  const valid = expectedSignature === signatureKey;
+  function safeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  }
+  const valid = safeEqual(expectedSignature, String(signatureKey || ''));
   if (!valid) {
     return { valid: false, orderId, status: null, method: null, grossAmount: null, raw: payload };
   }

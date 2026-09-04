@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-1.1.x"]
 }
 
@@ -59,6 +59,9 @@ model Profile {
   reportsReceived            UserReport[]              @relation("ReportReported")
   reportsMade                UserReport[]              @relation("ReportReporter")
   verifications              VerificationDocument[]
+  cart                       Cart?
+  ordersAsBuyer              Order[]                   @relation("OrderBuyer")
+  productReviews             ProductReview[]
 
   @@map("profiles")
 }
@@ -102,6 +105,17 @@ model Party {
   verifications      VerificationDocument[]
   escrowsAsBuyer     EscrowTransaction[]    @relation("EscrowBuyerParty")
   escrowsAsSeller    EscrowTransaction[]    @relation("EscrowSellerParty")
+  inventoryLogs      InventoryLog[]
+  Product            Product[]
+  OrderSub           OrderSub[]
+  Contact            Contact[]
+  ReceivableCard     ReceivableCard[]
+  DebtCard           DebtCard[]
+  InventoryCard      InventoryCard[]
+  Task               Task[]
+  Agenda             Agenda[]
+  DashboardCache     DashboardCache?
+  CashBook           CashBook?
 
   @@map("parties")
 }
@@ -136,6 +150,7 @@ model Category {
   children      Category[]    @relation("CategoryTree")
   opportunities Opportunity[]
   parties       Party[]
+  Product       Product[]
 
   @@map("categories")
 }
@@ -200,6 +215,20 @@ model OpportunityCapability {
 
   @@unique([opportunityId, capabilityId])
   @@map("opportunity_capabilities")
+}
+
+model OpportunityPolicy {
+  id                         String   @id @default(uuid())
+  freeMaxActiveNeeds         Int
+  freeMaxActiveOffers        Int
+  memberMaxActiveNeeds       Int
+  memberMaxActiveOffers      Int
+  expiredMembershipKeepCount Int
+  updatedBy                  String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@map("opportunity_policies")
 }
 
 model Media {
@@ -289,15 +318,15 @@ model Invitation {
 }
 
 model Deal {
-  id           String     @id @default(uuid())
-  invitationId String     @unique
-  status       DealStatus @default(NEGOTIATION)
-  agreedTerms  Json?
-  notes        String?
-  startAt      DateTime?
-  endAt        DateTime?
-  cancelReason String?
-  createdAt    DateTime   @default(now())
+  id                 String              @id @default(uuid())
+  invitationId       String              @unique
+  status             DealStatus          @default(NEGOTIATION)
+  agreedTerms        Json?
+  notes              String?
+  startAt            DateTime?
+  endAt              DateTime?
+  cancelReason       String?
+  createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   invitation         Invitation          @relation(fields: [invitationId], references: [id], onDelete: Cascade)
   reviews            Review[]
@@ -330,9 +359,11 @@ model EscrowTransaction {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
-  deal              Deal?        @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  buyerParty        Party        @relation("EscrowBuyerParty", fields: [buyerPartyId], references: [id], onDelete: Cascade)
-  sellerParty       Party        @relation("EscrowSellerParty", fields: [sellerPartyId], references: [id], onDelete: Cascade)
+  deal        Deal?      @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  buyerParty  Party      @relation("EscrowBuyerParty", fields: [buyerPartyId], references: [id], onDelete: Cascade)
+  sellerParty Party      @relation("EscrowSellerParty", fields: [sellerPartyId], references: [id], onDelete: Cascade)
+  Order       Order[]
+  OrderSub    OrderSub[]
 
   @@index([buyerPartyId])
   @@index([sellerPartyId])
@@ -1279,4 +1310,652 @@ enum EscrowStatus {
   REFUNDED
   DISPUTED
   CANCELLED
+}
+
+// =============================================================================
+// MARKETPLACE (lean) — schema additions
+// Include in prisma/schema.prisma
+//
+// Models: Product*, Cart*, Order*, ProductReview
+// NOT included: CashBook, DebtBook, ReceivableBook, InventoryBook (→ Business Suite)
+// =============================================================================
+
+// ============================================
+// MARKETPLACE — Product Catalog (updated)
+// ============================================
+
+model Product {
+  id          String   @id @default(uuid())
+  partyId     String
+  categoryId  String?
+  name        String
+  description String?
+  price       Float
+  currency    String   @default("IDR")
+  stock       Int      @default(0)
+  sku         String?
+  isActive    Boolean  @default(true)
+  isFeatured  Boolean  @default(false)
+  tags        String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  party         Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  category      Category?        @relation(fields: [categoryId], references: [id])
+  media         ProductMedia[]
+  variants      ProductVariant[]
+  orderItems    OrderItem[]
+  cartItems     CartItem[]
+  reviews       ProductReview[]
+  inventoryLogs InventoryLog[]
+  InventoryCard InventoryCard[]
+
+  @@index([partyId, isActive])
+  @@index([categoryId])
+  @@index([isFeatured])
+  @@map("products")
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid())
+  productId String?
+  name      String
+  price     Float?
+  stock     Int      @default(0)
+  sku       String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  product       Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  orderItems    OrderItem[]
+  inventoryLogs InventoryLog[]
+
+  @@map("product_variants")
+}
+
+enum InventoryLogType {
+  IN
+  OUT
+  ADJUST
+}
+
+model InventoryLog {
+  id            String           @id @default(uuid())
+  partyId       String
+  productId     String
+  variantId     String?
+  type          InventoryLogType
+  quantity      Int
+  note          String?
+  referenceType String?
+  referenceId   String?
+  createdBy     String?
+  createdAt     DateTime         @default(now())
+
+  party   Party           @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId, createdAt])
+  @@index([partyId, createdAt])
+  @@map("inventory_logs")
+}
+
+model ProductMedia {
+  id           String   @id @default(uuid())
+  productId    String
+  url          String
+  cloudinaryId String
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_media")
+}
+
+// ============================================
+// MARKETPLACE — Cart
+// ============================================
+
+model Cart {
+  id        String   @id @default(uuid())
+  profileId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items   CartItem[]
+  profile Profile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  productId String
+  variantId String?
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, productId, variantId])
+  @@map("cart_items")
+}
+
+// ============================================
+// MARKETPLACE — Order (updated: multi-seller)
+// ============================================
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  buyerId         String
+  status          OrderStatus @default(PENDING_PAYMENT)
+  totalAmount     Float
+  currency        String      @default("IDR")
+  shippingAddress Json?
+  notes           String?
+  invoiceNumber   String      @unique
+  escrowId        String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  buyer       Profile            @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  items       OrderItem[]
+  subOrders   OrderSub[]
+  escrow      EscrowTransaction? @relation(fields: [escrowId], references: [id])
+  cashEntries CashEntry[]
+
+  @@index([buyerId])
+  @@index([status])
+  @@map("orders")
+}
+
+// Sub-order per seller (untuk multi-seller cart)
+model OrderSub {
+  id             String      @id @default(uuid())
+  orderId        String
+  sellerPartyId  String
+  subtotal       Float
+  status         OrderStatus @default(PENDING_PAYMENT)
+  trackingNumber String?
+  shippedAt      DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sellerParty         Party              @relation(fields: [sellerPartyId], references: [id], onDelete: Cascade)
+  items               OrderItem[]
+  escrow              EscrowTransaction? @relation(fields: [escrowTransactionId], references: [id])
+  escrowTransactionId String?
+
+  @@index([orderId])
+  @@index([sellerPartyId])
+  @@map("order_subs")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  subOrderId  String?
+  productId   String? // opsional jika ingin SetNull
+  variantId   String?
+  productName String // snapshot nama saat checkout
+  unitPrice   Float
+  quantity    Int
+  subtotal    Float
+  createdAt   DateTime @default(now())
+
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  subOrder OrderSub?       @relation(fields: [subOrderId], references: [id], onDelete: SetNull)
+  product  Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant  ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@map("order_items")
+}
+
+// ============================================
+// PRODUCT REVIEW
+// ============================================
+
+model ProductReview {
+  id         String   @id @default(uuid())
+  productId  String
+  reviewerId String
+  rating     Int
+  comment    String?
+  isVerified Boolean  @default(false) // true jika reviewer pernah beli
+  hidden     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product  Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  reviewer Profile @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, reviewerId])
+  @@index([productId])
+  @@map("product_reviews")
+}
+
+// ============================================
+// CASH BOOK (Kas Masuk / Keluar)
+// ============================================
+
+// ============================================
+// MASTER DATA — Contact Directory per Party
+// ============================================
+
+enum ContactType {
+  CUSTOMER
+  SUPPLIER
+  DEBTOR
+  CREDITOR
+}
+
+enum ContactStatus {
+  ACTIVE
+  INACTIVE
+  BLACKLISTED
+}
+
+model Contact {
+  id           String        @id @default(uuid())
+  partyId      String
+  type         ContactType
+  code         String? // Kode unik per party, e.g. CUST-001
+  name         String
+  email        String?
+  phone        String?
+  address      String?
+  city         String?
+  country      String?       @default("Indonesia")
+  taxId        String? // NPWP
+  bankName     String?
+  bankAccount  String?
+  notes        String?
+  status       ContactStatus @default(ACTIVE)
+  creditLimit  Float? // Batas kredit untuk piutang
+  paymentTerms Int? // Hari (e.g. 30 hari)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  // Relations to cards
+  receivableCards ReceivableCard[]
+  debtCards       DebtCard[]
+  tasks           Task[]
+  agendaItems     Agenda[]
+
+  @@unique([partyId, code])
+  @@index([partyId, type])
+  @@index([partyId, status])
+  @@index([partyId, name])
+  @@map("contacts")
+}
+
+// ============================================
+// KARTU PIUTANG (per Contact/Debtor)
+// ============================================
+
+model ReceivableCard {
+  id                String    @id @default(uuid())
+  partyId           String
+  contactId         String // link ke Contact (type: DEBTOR atau CUSTOMER)
+  openingBalance    Float     @default(0)
+  totalDebit        Float     @default(0) // penambahan piutang
+  totalCredit       Float     @default(0) // pembayaran masuk
+  currentBalance    Float     @default(0) // opening + debit - credit
+  currency          String    @default("IDR")
+  lastTransactionAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  party   Party                 @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  contact Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  entries ReceivableCardEntry[]
+
+  @@unique([partyId, contactId])
+  @@index([partyId])
+  @@map("receivable_cards")
+}
+
+model ReceivableCardEntry {
+  id            String   @id @default(uuid())
+  cardId        String
+  partyId       String
+  date          DateTime @default(now())
+  description   String
+  referenceNo   String? // No Invoice / No Order
+  referenceType String? // 'ORDER', 'MANUAL', 'PAYMENT'
+  referenceId   String?
+  debit         Float    @default(0) // piutang bertambah
+  credit        Float    @default(0) // pembayaran masuk
+  balance       Float // saldo setelah transaksi
+  currency      String   @default("IDR")
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  card ReceivableCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, date])
+  @@index([partyId])
+  @@map("receivable_card_entries")
+}
+
+// ============================================
+// KARTU HUTANG (per Contact/Creditor)
+// ============================================
+
+model DebtCard {
+  id                String    @id @default(uuid())
+  partyId           String
+  contactId         String
+  openingBalance    Float     @default(0)
+  totalDebit        Float     @default(0) // pembayaran keluar
+  totalCredit       Float     @default(0) // hutang bertambah
+  currentBalance    Float     @default(0) // opening + credit - debit
+  currency          String    @default("IDR")
+  lastTransactionAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  party   Party           @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  contact Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  entries DebtCardEntry[]
+
+  @@unique([partyId, contactId])
+  @@index([partyId])
+  @@map("debt_cards")
+}
+
+model DebtCardEntry {
+  id            String   @id @default(uuid())
+  cardId        String
+  partyId       String
+  date          DateTime @default(now())
+  description   String
+  referenceNo   String?
+  referenceType String?
+  referenceId   String?
+  debit         Float    @default(0) // pembayaran keluar
+  credit        Float    @default(0) // hutang bertambah
+  balance       Float
+  currency      String   @default("IDR")
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  card DebtCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, date])
+  @@index([partyId])
+  @@map("debt_card_entries")
+}
+
+// ============================================
+// KARTU PERSEDIAAN (per Product)
+// ============================================
+
+model InventoryCard {
+  id             String    @id @default(uuid())
+  partyId        String
+  productId      String
+  variantId      String?
+  openingStock   Int       @default(0)
+  totalIn        Int       @default(0)
+  totalOut       Int       @default(0)
+  totalAdjust    Int       @default(0)
+  currentStock   Int       @default(0)
+  avgUnitCost    Float     @default(0) // HPP rata-rata
+  lastMovementAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  party   Party                @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  entries InventoryCardEntry[]
+
+  @@unique([partyId, productId, variantId])
+  @@index([partyId])
+  @@map("inventory_cards")
+}
+
+model InventoryCardEntry {
+  id            String   @id @default(uuid())
+  cardId        String
+  partyId       String
+  date          DateTime @default(now())
+  type          String // 'IN', 'OUT', 'ADJUST'
+  description   String
+  referenceNo   String?
+  referenceType String?
+  referenceId   String?
+  qty           Int
+  unitCost      Float?
+  stockBefore   Int
+  stockAfter    Int
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  card InventoryCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, date])
+  @@index([partyId])
+  @@map("inventory_card_entries")
+}
+
+// ============================================
+// TASK / ACTION PLAN
+// ============================================
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  partyId     String
+  contactId   String? // optional: terkait dengan customer/supplier
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  targetDate  DateTime? // deadline
+  completedAt DateTime?
+  result      String? // hasil setelah selesai
+  assignedTo  String? // profileId
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  party     Party          @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  contact   Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  reminders TaskReminder[]
+
+  @@index([partyId, status])
+  @@index([partyId, targetDate])
+  @@index([partyId, priority])
+  @@index([assignedTo])
+  @@map("tasks")
+}
+
+model TaskReminder {
+  id        String    @id @default(uuid())
+  taskId    String
+  remindAt  DateTime
+  sent      Boolean   @default(false)
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([remindAt])
+  @@map("task_reminders")
+}
+
+// ============================================
+// AGENDA / KALENDER
+// ============================================
+
+model Agenda {
+  id           String    @id @default(uuid())
+  partyId      String
+  contactId    String? // terkait dengan customer/supplier
+  title        String
+  description  String?
+  startAt      DateTime
+  endAt        DateTime?
+  location     String?
+  isAllDay     Boolean   @default(false)
+  reminderAt   DateTime? // waktu pengingat
+  reminderSent Boolean   @default(false)
+  status       String    @default("SCHEDULED") // SCHEDULED, DONE, CANCELLED
+  createdBy    String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  party   Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([partyId, startAt])
+  @@index([partyId, status])
+  @@map("agenda")
+}
+
+// ============================================
+// DASHBOARD CACHE (aggregated per Party)
+// ============================================
+
+model DashboardCache {
+  id          String   @id @default(uuid())
+  partyId     String   @unique
+  dateRange   String // '7d', '30d', '90d', '1y'
+  generatedAt DateTime @default(now())
+  expiresAt   DateTime
+
+  // Financial Summary
+  totalIncome         Float @default(0)
+  totalExpense        Float @default(0)
+  netCashFlow         Float @default(0)
+  totalReceivable     Float @default(0)
+  totalDebt           Float @default(0)
+  totalInventoryValue Float @default(0)
+
+  // Operational
+  totalProducts    Int @default(0)
+  lowStockProducts Int @default(0)
+  totalOrders      Int @default(0)
+  completedOrders  Int @default(0)
+  pendingOrders    Int @default(0)
+
+  // Task
+  totalTasks     Int @default(0)
+  overdueTasks   Int @default(0)
+  completedTasks Int @default(0)
+
+  // Contacts
+  totalCustomers Int @default(0)
+  totalSuppliers Int @default(0)
+  totalDebtors   Int @default(0)
+  totalCreditors Int @default(0)
+
+  // JSON untuk detail tambahan
+  details Json?
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@index([partyId])
+  @@index([expiresAt])
+  @@map("dashboard_cache")
+}
+
+// ============================================
+// PARTY RELATIONS (tambahkan ke model Party)
+// ============================================
+// contacts          Contact[]
+// receivableCards   ReceivableCard[]
+// debtCards         DebtCard[]
+// inventoryCards    InventoryCard[]
+// tasks             Task[]
+// agendaItems       Agenda[]
+// dashboardCaches   DashboardCache[]
+
+// ============================================
+// CASH BOOK (per Party) — kas masuk / keluar
+// ============================================
+
+enum CashEntryType {
+  INCOME
+  EXPENSE
+}
+
+enum CashEntryStatus {
+  DRAFT
+  CONFIRMED
+  VOID
+}
+
+model CashBook {
+  id        String   @id @default(uuid())
+  partyId   String   @unique
+  balance   Float    @default(0)
+  currency  String   @default("IDR")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  party   Party       @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  entries CashEntry[]
+
+  @@map("cash_books")
+}
+
+model CashEntry {
+  id            String          @id @default(uuid())
+  cashBookId    String
+  partyId       String
+  type          CashEntryType
+  amount        Float
+  currency      String          @default("IDR")
+  category      String
+  description   String?
+  referenceId   String?
+  referenceType String?
+  status        CashEntryStatus @default(CONFIRMED)
+  createdBy     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  cashBook CashBook @relation(fields: [cashBookId], references: [id], onDelete: Cascade)
+  Order    Order?   @relation(fields: [orderId], references: [id])
+  orderId  String?
+
+  @@index([cashBookId, createdAt])
+  @@index([partyId, type])
+  @@map("cash_entries")
 }

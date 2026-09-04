@@ -1,4 +1,4 @@
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
 const throttleConfig = require('../config/throttle.config');
 const redisConfig = require('../config/redis.config');
@@ -6,27 +6,46 @@ const logger = require('../core/logger');
 
 let redisClient = null;
 
+// Helper untuk otomatis menambahkan scheme 'rediss://' jika URL diawali '//'
+const sanitizeRedisUrl = (rawUrl) => {
+  if (!rawUrl) return rawUrl;
+  if (rawUrl.startsWith('//')) {
+    return `rediss:${rawUrl}`;
+  }
+  return rawUrl;
+};
+
+const activeRedisUrl = sanitizeRedisUrl(redisConfig.url || process.env.REDIS_URL);
+
 const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
 const hasExplicitRedis = Boolean(
-  process.env.REDIS_URL && process.env.REDIS_URL !== 'redis://localhost:6379'
+  activeRedisUrl && activeRedisUrl !== 'redis://localhost:6379'
 );
+
+// Warn once at module load if production is running without a shared Redis store.
+if (process.env.NODE_ENV === 'production' && !hasExplicitRedis) {
+  logger.warn(
+    'Rate limiter running WITHOUT Redis store in production — limits are per-process only.'
+  );
+}
 
 function createRedisStore(prefix) {
   if (!hasExplicitRedis || isTestEnv) return undefined;
   try {
     if (!redisClient) {
       const Redis = require('ioredis');
-      redisClient = new Redis(redisConfig.url, {
+      redisClient = new Redis(activeRedisUrl, {
         ...redisConfig.options,
-        lazyConnect: true,
-        enableOfflineQueue: false,
+        enableOfflineQueue: true, // Diaktifkan agar command tidak dibuang saat koneksi awal sedang diproses
         maxRetriesPerRequest: 1,
-        retryStrategy: (times) => (times > 2 ? null : 1000),
+        retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
       });
+
       redisClient.on('error', (err) => {
         logger.warn('Rate-limit Redis connection warning', { error: err.message });
       });
     }
+
     return new RedisStore({
       sendCommand: (...args) => redisClient.call(...args),
       prefix,
@@ -44,10 +63,10 @@ function makeLimiter({ windowMs, max, prefix, message }) {
     standardHeaders: true,
     legacyHeaders: false,
     store: createRedisStore(prefix),
-    // Prefer user id when authenticated, else IP
+    // Menggunakan ipKeyGenerator untuk penanganan IPv6 yang aman
     keyGenerator: (req) => {
       const uid = req.profile?.id || req.user?.id || req.supabaseUser?.id;
-      return uid ? `u:${uid}` : `ip:${req.ip}`;
+      return uid ? `u:${uid}` : `ip:${ipKeyGenerator(req.ip)}`;
     },
     handler: (req, res) => {
       res.status(429).json({

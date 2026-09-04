@@ -2,6 +2,41 @@ const ApiError = require('../utils/apiError');
 const ErrorCodes = require('../utils/errorCodes');
 const logger = require('../core/logger');
 
+const SENSITIVE_KEYS = [
+  'password',
+  'confirmpassword',
+  'newpassword',
+  'oldpassword',
+  'token',
+  'accesstoken',
+  'refreshtoken',
+  'authorization',
+  'secret',
+  'apikey',
+  'otp',
+  'cvv',
+  'cardnumber',
+  'pin',
+];
+
+/**
+ * Recursively redact sensitive keys from objects/arrays.
+ * Depth-limited to avoid pathological nesting.
+ */
+function redact(value, depth = 0) {
+  if (depth > 5 || value == null) return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        SENSITIVE_KEYS.includes(String(k).toLowerCase()) ? '[REDACTED]' : redact(v, depth + 1),
+      ])
+    );
+  }
+  return value;
+}
+
 /**
  * Extracts sanitized request diagnostic metadata for error tracking.
  *
@@ -12,14 +47,8 @@ function extractRequestContext(req) {
   if (!req) return {};
 
   const headers = req.headers || {};
-  const body = req.body && typeof req.body === 'object' ? { ...req.body } : req.body;
-
-  // Mask common sensitive fields in body
-  if (body && typeof body === 'object') {
-    ['password', 'token', 'authorization', 'accessToken', 'secret'].forEach((key) => {
-      if (key in body) body[key] = '[REDACTED]';
-    });
-  }
+  const body =
+    req.body && typeof req.body === 'object' ? redact({ ...req.body }) : req.body;
 
   return {
     method: req.method,
@@ -29,7 +58,7 @@ function extractRequestContext(req) {
     ip: req.ip || headers['x-forwarded-for'] || req.socket?.remoteAddress,
     userAgent: headers['user-agent'],
     userId: req.user?.id || req.supabaseUser?.id || req.profile?.id || undefined,
-    body: body && Object.keys(body).length > 0 ? body : undefined,
+    body: body && typeof body === 'object' && Object.keys(body).length > 0 ? body : undefined,
   };
 }
 
@@ -118,4 +147,5 @@ module.exports = {
   errorHandler,
   notFoundHandler,
   extractRequestContext,
+  redact,
 };

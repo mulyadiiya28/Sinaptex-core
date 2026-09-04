@@ -76,7 +76,13 @@ const disputeEscrow = asyncHandler(async (req, res) => {
 
 const getEscrow = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const result = await escrowService.getEscrowById(id);
+  const callerProfileId = req.profile?.id;
+  // Prefer role check already performed by requireRole('ADMIN') on admin routes.
+  // Fallback boolean for defense-in-depth if this handler is ever called directly.
+  const isAdmin =
+    Boolean(req.isAdmin) ||
+    (Array.isArray(req.profile?.roles) && req.profile.roles.includes('ADMIN'));
+  const result = await escrowService.getEscrowById(id, { callerProfileId, isAdmin });
   return ApiResponse.success(res, result, 'Escrow transaction details retrieved');
 });
 

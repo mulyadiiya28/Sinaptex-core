@@ -6,10 +6,16 @@ const { isOriginAllowed } = require('../config/cors.config');
 const logger = require('./logger');
 const { eventBus, EVENTS } = require('./eventBus');
 const chatService = require('../modules/chat/chat.service');
+const ApiError = require('../utils/apiError');
 
 /**
  * CHAT + NOTIFICATION WebSocket layer
  * ------------------------------------------------------------------
+ * Security (merged):
+ *   - Session revalidation every WS_REVALIDATION_INTERVAL_MS (default 60s)
+ *   - Per-event in-memory rate limits (message:send, typing:*)
+ *   - Sanitized error payloads to clients (no raw internal messages)
+ *
  * Compression metrics (aplikasi):
  *   Mengukur payload outbound JSON vs hasil deflate (level sama dengan config).
  *   Ini perkiraan rasio wire permessage-deflate — Engine.IO tidak mengekspos
@@ -44,6 +50,12 @@ const COMPRESSION_METRICS_SAMPLE_RATE = Math.min(
 
 const ZLIB_LEVEL = 3;
 
+/** How often to re-check Supabase token for connected sockets (ms). */
+const REVALIDATION_INTERVAL_MS = Math.max(
+  15_000,
+  Number(process.env.WS_REVALIDATION_INTERVAL_MS || 60_000)
+);
+
 const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
   ? {
       threshold: PER_MESSAGE_DEFLATE_THRESHOLD,
@@ -65,6 +77,13 @@ const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
 /** @type {Map<string, Set<string>>} */
 const connectionsByProfile = new Map();
 
+/**
+ * socket.id -> { profileId, token, timer }
+ * Used for periodic session revalidation.
+ * @type {Map<string, { profileId: string, token: string, timer: NodeJS.Timeout }>}
+ */
+const activeSessions = new Map();
+
 const stats = {
   startedAt: new Date().toISOString(),
   connectsTotal: 0,
@@ -73,17 +92,144 @@ const stats = {
   disconnectReasons: Object.create(null),
   /** @type {Record<string, number>} */
   authFailures: Object.create(null),
+  /** @type {Record<string, number>} */
+  rateLimited: Object.create(null),
   compression: {
     outboundMessages: 0,
     sampledMessages: 0,
     skippedBelowThreshold: 0,
     compressedMessages: 0,
     rawBytes: 0,
-    wireBytes: 0, // setelah deflate bila eligible; else = raw
+    wireBytes: 0,
     rawBytesCompressedOnly: 0,
     wireBytesCompressedOnly: 0,
   },
 };
+
+// ── Event rate limits (in-memory, per profileId+event) ───────────────────────
+const WS_RATE_LIMITS = {
+  'message:send': { max: Number(process.env.WS_RL_MESSAGE_SEND_MAX || 30), windowMs: 60_000 },
+  'typing:start': { max: Number(process.env.WS_RL_TYPING_MAX || 20), windowMs: 60_000 },
+  'typing:stop': { max: Number(process.env.WS_RL_TYPING_MAX || 20), windowMs: 60_000 },
+  'conversation:read': { max: Number(process.env.WS_RL_READ_MAX || 60), windowMs: 60_000 },
+};
+
+class WsRateLimiter {
+  constructor() {
+    /** @type {Map<string, { count: number, resetAt: number }>} */
+    this.buckets = new Map();
+  }
+
+  /**
+   * @param {string} profileId
+   * @param {string} eventName
+   * @returns {boolean} true if allowed
+   */
+  check(profileId, eventName) {
+    const limit = WS_RATE_LIMITS[eventName];
+    if (!limit) return true;
+
+    const key = `${profileId}:${eventName}`;
+    const now = Date.now();
+    let bucket = this.buckets.get(key);
+
+    if (!bucket || now > bucket.resetAt) {
+      this.buckets.set(key, { count: 1, resetAt: now + limit.windowMs });
+      return true;
+    }
+
+    if (bucket.count >= limit.max) {
+      return false;
+    }
+
+    bucket.count += 1;
+    return true;
+  }
+
+  cleanup() {
+    const now = Date.now();
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (now > bucket.resetAt) this.buckets.delete(key);
+    }
+  }
+}
+
+const wsRateLimiter = new WsRateLimiter();
+setInterval(() => wsRateLimiter.cleanup(), 5 * 60 * 1000).unref?.();
+
+// ── Error sanitization ──────────────────────────────────────────────────────
+
+/**
+ * Never send raw internal error messages / stacks to the client.
+ * @param {unknown} err
+ * @returns {{ message: string, code?: string }}
+ */
+function sanitizeError(err) {
+  if (err instanceof ApiError) {
+    return {
+      message: err.message,
+      code: err.code || err.errorCode || 'ERROR',
+    };
+  }
+  if (err && typeof err === 'object' && err.code && err.message && err.statusCode) {
+    // Duck-typed ApiError-like
+    return { message: String(err.message), code: String(err.code) };
+  }
+  return { message: 'An error occurred', code: 'INTERNAL_ERROR' };
+}
+
+// ── Session revalidation ────────────────────────────────────────────────────
+
+async function revalidateSession(socket) {
+  const session = activeSessions.get(socket.id);
+  if (!session) return;
+
+  try {
+    const { data, error } = await supabaseAdmin.auth.getUser(session.token);
+    if (error || !data?.user) {
+      logger.warn('WS session invalidated — token revoked or expired', {
+        socketId: socket.id,
+        profileId: session.profileId,
+      });
+      socket.data = socket.data || {};
+      socket.data.evictReason = 'SESSION_EXPIRED';
+      socket.emit('session:expired', {
+        code: 'SESSION_EXPIRED',
+        message: 'Session expired. Please reconnect.',
+      });
+      socket.disconnect(true);
+      stopRevalidation(socket.id);
+    }
+  } catch (e) {
+    logger.error('WS revalidation error', {
+      error: e.message,
+      socketId: socket.id,
+      profileId: session.profileId,
+    });
+    // Do not disconnect on transient errors (network blip to Supabase)
+  }
+}
+
+function startRevalidation(socket, profileId, token) {
+  stopRevalidation(socket.id);
+  const timer = setInterval(() => {
+    revalidateSession(socket);
+  }, REVALIDATION_INTERVAL_MS);
+  // Allow process to exit even if timers remain (tests / graceful shutdown)
+  if (typeof timer.unref === 'function') timer.unref();
+
+  activeSessions.set(socket.id, { profileId, token, timer });
+}
+
+function stopRevalidation(socketId) {
+  const session = activeSessions.get(socketId);
+  if (session?.timer) {
+    clearInterval(session.timer);
+  }
+  activeSessions.delete(socketId);
+}
+
+// ── Stats helpers ───────────────────────────────────────────────────────────
 
 function bumpReason(map, reason) {
   const key = reason || 'unknown';
@@ -181,6 +327,7 @@ function getSocketStats() {
     disconnectsTotal: stats.disconnectsTotal,
     disconnectReasons: { ...stats.disconnectReasons },
     authFailures: { ...stats.authFailures },
+    rateLimited: { ...stats.rateLimited },
     compression: compressionSnapshot(),
     config: {
       maxConnectionsPerProfile: MAX_CONNECTIONS_PER_PROFILE,
@@ -189,6 +336,8 @@ function getSocketStats() {
       perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
       perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
       compressionMetricsSampleRate: COMPRESSION_METRICS_SAMPLE_RATE,
+      revalidationIntervalMs: REVALIDATION_INTERVAL_MS,
+      rateLimits: { ...WS_RATE_LIMITS },
     },
   };
 }
@@ -239,6 +388,7 @@ function trackConnection(profileId, socketId, io) {
         code: 'SESSION_REPLACED',
         message: 'Sesi digantikan karena batas koneksi perangkat/tab.',
       });
+      stopRevalidation(oldestId);
       oldest.disconnect(true);
     }
   }
@@ -255,6 +405,10 @@ function untrackConnection(profileId, socketId) {
   }
 }
 
+/**
+ * @param {import('http').Server} httpServer
+ * @returns {import('socket.io').Server}
+ */
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
     pingInterval: PING_INTERVAL_MS,
@@ -288,6 +442,7 @@ function initSocket(httpServer) {
         return next(new Error('Invalid or expired token'));
       }
 
+      // Resolve via User.supabaseId (canonical mapping in this codebase)
       const user = await prisma.user.findUnique({
         where: { supabaseId: data.user.id },
         include: { profile: true },
@@ -297,7 +452,14 @@ function initSocket(httpServer) {
         return next(new Error('Profile not found. Complete registration first.'));
       }
 
+      // Optional ban gate — only if profile exposes a status field
+      if (user.profile.status === 'BANNED' || user.profile.status === 'SUSPENDED') {
+        bumpReason(stats.authFailures, 'account_suspended');
+        return next(new Error('Account suspended'));
+      }
+
       socket.profileId = user.profile.id;
+      socket.data = socket.data || {};
       socket.data.token = token;
       socket.data.connectedAt = Date.now();
       next();
@@ -329,10 +491,15 @@ function initSocket(httpServer) {
   io.on('connection', (socket) => {
     const { profileId } = socket;
     const room = `profile:${profileId}`;
+    const token = socket.data?.token;
 
     trackConnection(profileId, socket.id, io);
     socket.join(room);
     stats.connectsTotal += 1;
+
+    if (token) {
+      startRevalidation(socket, profileId, token);
+    }
 
     logger.info('Socket connected', {
       profileId,
@@ -344,6 +511,17 @@ function initSocket(httpServer) {
 
     socket.on('message:send', async ({ conversationId, content }, ack) => {
       try {
+        if (!wsRateLimiter.check(profileId, 'message:send')) {
+          bumpReason(stats.rateLimited, 'message:send');
+          const payload = {
+            ok: false,
+            code: 'RATE_LIMITED',
+            message: 'Too many messages. Please slow down.',
+          };
+          if (typeof ack === 'function') ack(payload);
+          return;
+        }
+
         const result = await chatService.sendMessage({
           conversationId,
           senderId: profileId,
@@ -352,13 +530,19 @@ function initSocket(httpServer) {
         });
         if (typeof ack === 'function') ack({ ok: true, message: result.message });
       } catch (err) {
-        socket.emit('error', { message: err.message });
-        if (typeof ack === 'function') ack({ ok: false, message: err.message });
+        const safe = sanitizeError(err);
+        socket.emit('error', safe);
+        if (typeof ack === 'function') ack({ ok: false, ...safe });
       }
     });
 
     socket.on('typing:start', async ({ conversationId }) => {
       try {
+        if (!wsRateLimiter.check(profileId, 'typing:start')) {
+          bumpReason(stats.rateLimited, 'typing:start');
+          return;
+        }
+
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
         const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
@@ -374,6 +558,11 @@ function initSocket(httpServer) {
 
     socket.on('typing:stop', async ({ conversationId }) => {
       try {
+        if (!wsRateLimiter.check(profileId, 'typing:stop')) {
+          bumpReason(stats.rateLimited, 'typing:stop');
+          return;
+        }
+
         const participantIds = await chatService.getConversationParticipantIds(conversationId);
         const recipientId = participantIds.find((id) => id !== profileId);
         if (recipientId) {
@@ -389,14 +578,21 @@ function initSocket(httpServer) {
 
     socket.on('conversation:read', async ({ conversationId }) => {
       try {
+        if (!wsRateLimiter.check(profileId, 'conversation:read')) {
+          bumpReason(stats.rateLimited, 'conversation:read');
+          return;
+        }
+
         await chatService.markAsRead({ conversationId, profileId });
       } catch (err) {
-        socket.emit('error', { message: err.message });
+        const safe = sanitizeError(err);
+        socket.emit('error', safe);
       }
     });
 
     socket.on('disconnect', (reason) => {
       untrackConnection(profileId, socket.id);
+      stopRevalidation(socket.id);
 
       const evict = socket.data?.evictReason;
       const normalized = evict ? `${reason}:${evict}` : reason;
@@ -426,6 +622,7 @@ function initSocket(httpServer) {
     perMessageDeflate: PER_MESSAGE_DEFLATE_ENABLED,
     perMessageDeflateThreshold: PER_MESSAGE_DEFLATE_THRESHOLD,
     compressionMetricsSampleRate: COMPRESSION_METRICS_SAMPLE_RATE,
+    revalidationIntervalMs: REVALIDATION_INTERVAL_MS,
   });
 
   return io;
@@ -434,9 +631,12 @@ function initSocket(httpServer) {
 module.exports = {
   initSocket,
   getSocketStats,
+  sanitizeError,
   _connectionsByProfile: connectionsByProfile,
   _MAX_CONNECTIONS_PER_PROFILE: MAX_CONNECTIONS_PER_PROFILE,
   _PING_INTERVAL_MS: PING_INTERVAL_MS,
   _PING_TIMEOUT_MS: PING_TIMEOUT_MS,
   _PER_MESSAGE_DEFLATE_ENABLED: PER_MESSAGE_DEFLATE_ENABLED,
+  _REVALIDATION_INTERVAL_MS: REVALIDATION_INTERVAL_MS,
+  _WS_RATE_LIMITS: WS_RATE_LIMITS,
 };

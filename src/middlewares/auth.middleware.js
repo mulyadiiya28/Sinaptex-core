@@ -1,5 +1,5 @@
-const { supabaseAdmin } = require('../../config/supabase');
-const prisma = require('../../config/prisma');
+const { supabaseAdmin } = require('../config/supabase');
+const prisma = require('../config/prisma');
 const ApiError = require('../utils/apiError');
 const ErrorCodes = require('../utils/errorCodes');
 const asyncHandler = require('../utils/asyncHandler');

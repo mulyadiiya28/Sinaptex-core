@@ -30,7 +30,7 @@ function getLimit(policy, options = {}) {
   return policy?.memberLimit || 20;
 }
 
-function evaluateRecord(record) {
+function _evaluateRecord(record) {
   if (record === null || record === undefined) return null;
   if (typeof record === 'boolean') return record;
   if (typeof record === 'string') {
@@ -40,22 +40,22 @@ function evaluateRecord(record) {
   if (Array.isArray(record)) {
     if (record.length === 0) return false;
     for (const item of record) {
-      const res = evaluateRecord(item);
+      const res = _evaluateRecord(item);
       if (res === true) return true;
     }
     return false;
   }
   if (typeof record === 'object') {
     if (record.membership !== undefined) {
-      const res = evaluateRecord(record.membership);
+      const res = _evaluateRecord(record.membership);
       if (res !== null) return res;
     }
     if (record.profile !== undefined) {
-      const res = evaluateRecord(record.profile);
+      const res = _evaluateRecord(record.profile);
       if (res !== null) return res;
     }
     if (record.user !== undefined) {
-      const res = evaluateRecord(record.user);
+      const res = _evaluateRecord(record.user);
       if (res !== null) return res;
     }
 

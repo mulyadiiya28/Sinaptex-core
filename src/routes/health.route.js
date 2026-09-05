@@ -62,6 +62,7 @@ const readiness = async (req, res) => {
   });
 };
 
+router.get('/', readiness);
 router.get('/live', liveness);
 router.get('/ready', readiness);
 

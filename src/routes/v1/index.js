@@ -28,9 +28,6 @@ router.use('/content', require('../../modules/content/content.routes'));
  * into the business decision pipeline.
  * ============================================================ */
 
-// GET /api/v1/health — database (critical), redis/cache (optional), socket stats
-router.get('/health', require('../health.route'));
-
 // Free-form business requests → intent module
 router.use('/intent', require('../../modules/intent/intent.routes'));
 

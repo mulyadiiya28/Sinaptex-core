@@ -4,7 +4,6 @@ const prisma = require('../config/prisma');
 const cache = require('../core/cache');
 const { getSocketStats } = require('../core/socket');
 
-// Helper dengan implisit return (arrow-body-style) dan parameter `ms` yang digunakan (no-unused-vars)
 const withTimeout = (promise, ms) =>
   Promise.race([
     promise,
@@ -13,11 +12,11 @@ const withTimeout = (promise, ms) =>
     }),
   ]);
 
-// Liveness Check (tanpa block statement `{}` agar memenuhi arrow-body-style)
+// Liveness Check - implicit return
 const liveness = (req, res) =>
   res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 
-// Readiness Check
+// Readiness Check - menggunakan implicit return dengan IIFE atau fungsi terpisah
 const readiness = async (req, res) => {
   let healthy = true;
   const checks = { database: 'unknown', redis: 'unknown' };
@@ -25,21 +24,24 @@ const readiness = async (req, res) => {
   try {
     await withTimeout(prisma.$queryRaw`SELECT 1`, 2000);
     checks.database = 'ok';
-  } catch {
+  } catch (error) {
+    console.error('Database check failed:', error.message);
     checks.database = 'error';
     healthy = false;
   }
 
   try {
-    const client = cache.getClient && cache.getClient();
-    if (client) {
+    const client = cache.getClient?.();
+    if (client && typeof client.ping === 'function') {
       const pong = await withTimeout(client.ping(), 1000);
       checks.redis = pong === 'PONG' || pong === 'pong' ? 'ok' : 'error';
     } else {
       checks.redis = 'disabled';
     }
-  } catch {
+  } catch (error) {
+    console.error('Redis check failed:', error.message);
     checks.redis = 'error';
+    healthy = false;
   }
 
   let socket = null;
@@ -49,11 +51,12 @@ const readiness = async (req, res) => {
       activeSockets: stats?.activeSockets ?? 0,
       activeProfiles: stats?.activeProfiles ?? 0,
     };
-  } catch {
+  } catch (error) {
+    console.error('Socket stats failed:', error.message);
     socket = { status: 'unavailable' };
   }
 
-  res.status(healthy ? 200 : 503).json({
+  return res.status(healthy ? 200 : 503).json({
     success: healthy,
     status: healthy ? 'HEALTHY' : 'DEGRADED',
     checks,

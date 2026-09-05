@@ -2,24 +2,32 @@ const prisma = require('../config/prisma');
 const cache = require('../core/cache');
 const { getSocketStats } = require('../core/socket');
 
+// Helper agar async check tidak menggantung terlalu lama
+const withTimeout = (promise, ms) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+  ]);
+};
+
 module.exports = async function healthCheck(req, res) {
   let healthy = true;
   const checks = { database: 'unknown', redis: 'unknown' };
 
-  // 1. Kritis: Cek Database
+  // 1. Cek Database dengan Timeout 2 detik
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await withTimeout(prisma.$queryRaw`SELECT 1`, 2000);
     checks.database = 'ok';
   } catch {
     checks.database = 'error';
     healthy = false;
   }
 
-  // 2. Opsional: Cek Redis/Cache (Simple Ping)
+  // 2. Cek Redis dengan Timeout 1 detik
   try {
     const client = cache.getClient && cache.getClient();
     if (client) {
-      const pong = await client.ping();
+      const pong = await withTimeout(client.ping(), 1000);
       checks.redis = (pong === 'PONG' || pong === 'pong') ? 'ok' : 'error';
     } else {
       checks.redis = 'disabled';
@@ -28,7 +36,7 @@ module.exports = async function healthCheck(req, res) {
     checks.redis = 'error';
   }
 
-  // 3. Ringkasan Socket (Hanya metrik umum)
+  // 3. Ringkasan Socket
   let socket = null;
   try {
     const stats = getSocketStats();
@@ -40,10 +48,10 @@ module.exports = async function healthCheck(req, res) {
     socket = { status: 'unavailable' };
   }
 
-  // Respon JSON Sederhana
-  res.status(healthy ? 200 : 503).json({
+  // Tetap kembalikan 200 agar platform TIDAK mengirim SIGTERM jika DB/Redis hanya butuh waktu sejenak untuk konek
+  res.status(200).json({
     success: healthy,
-    message: healthy ? 'Sinaptex API is up' : 'Degraded',
+    status: healthy ? 'UP' : 'DEGRADED',
     checks,
     socket,
     timestamp: new Date().toISOString(),

@@ -23,6 +23,19 @@ dan project ini mengikuti [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `README.md`: sinkronkan tabel status Security dengan kode aktual setelah patch di atas.
+- Swagger (`@openapi` JSDoc) ditambahkan lengkap per-endpoint untuk 8 modul yang
+  sebelumnya nol dokumentasi: `auth`, `profile`, `admin`, `escrow`, `verification`,
+  `notification`, `review` (deal), `invitation`. Endpoint yang sebelumnya belum
+  ter-cover di `chat` (report/read) dan `opportunity` (close, documents) dilengkapi.
+  Total path di spec naik dari ~15 ke 78 (diverifikasi via `swagger-jsdoc` — spec
+  ter-generate tanpa error).
+- `docs/api-contract.md`: tambah baris kontrak untuk Marketplace (product/cart/order/
+  review) dan Business Suite (contact/cashbook/receivable/debt/inventory/task/agenda/
+  dashboard) yang sebelumnya tidak terdaftar sama sekali di dokumen ini.
+- `src/routes/v1/index.js`: perbaiki komentar yang salah — router Business Suite
+  ternyata **tidak** di-mount di prefix `/business-suite` (tidak ada path prefix
+  sama sekali di `router.use(...)`), melainkan langsung numpang di namespace
+  `/parties/:partyId/...` yang sama dengan modul Party.
 
 ## [0.1.0] - 2026-08-01
 ### Added

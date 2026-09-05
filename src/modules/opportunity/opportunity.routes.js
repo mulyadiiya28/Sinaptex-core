@@ -81,6 +81,11 @@
  *     tags: [Opportunities]
  *     summary: Upload media Opportunity (multipart, field "file") ke Cloudinary
  *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
  *     requestBody:
  *       content:
  *         multipart/form-data:
@@ -90,6 +95,92 @@
  *               file: { type: string, format: binary }
  *     responses:
  *       201: { description: Media terupload }
+ *       403: { description: Bukan pemilik Opportunity }
+ *
+ * /opportunities/{id}/close:
+ *   post:
+ *     tags: [Opportunities]
+ *     summary: Tutup Opportunity milik sendiri (status -> CLOSED)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Opportunity ditutup }
+ *       403: { description: Bukan pemilik }
+ *       404: { description: Opportunity tidak ditemukan }
+ *   patch:
+ *     tags: [Opportunities]
+ *     summary: Tutup Opportunity milik sendiri (alias PATCH dari endpoint POST /close)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Opportunity ditutup }
+ *       403: { description: Bukan pemilik }
+ *       404: { description: Opportunity tidak ditemukan }
+ *
+ * /opportunities/{id}/documents:
+ *   get:
+ *     tags: [Opportunities]
+ *     summary: List dokumen pendukung Opportunity (invoice, sertifikat, dst)
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Daftar dokumen }
+ *       404: { description: Opportunity tidak ditemukan }
+ *   post:
+ *     tags: [Opportunities]
+ *     summary: Upload dokumen pendukung Opportunity (multipart, field "file")
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *               documentType:
+ *                 type: string
+ *                 enum: [PROOF_OF_TRADE, QUALITY_CERTIFICATE, INVOICE, SPECIFICATION, SAMPLE_IMAGE, LEGAL_COMPLIANCE, OTHER]
+ *                 default: PROOF_OF_TRADE
+ *               title: { type: string, maxLength: 100 }
+ *     responses:
+ *       201: { description: Dokumen terupload }
+ *       403: { description: Bukan pemilik Opportunity }
+ *
+ * /opportunities/{id}/documents/{documentId}:
+ *   delete:
+ *     tags: [Opportunities]
+ *     summary: Hapus satu dokumen pendukung Opportunity
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Dokumen dihapus }
+ *       403: { description: Bukan pemilik Opportunity }
+ *       404: { description: Dokumen tidak ditemukan }
  */
 const router = require('express').Router();
 const {

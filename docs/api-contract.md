@@ -22,8 +22,13 @@
 **Base URL:** `/api/v1` (alias tanpa versi `/api` masih aktif untuk kompatibilitas — lihat
 kebijakan versioning/deprecation lengkap di `docs/api/conventions.md`)
 **Auth:** header `Authorization: Bearer <supabase_access_token>` (kecuali endpoint publik)
-**Swagger UI:** `/api/docs` (spec masih minim, JSDoc `@openapi` baru ditambahkan di
-`opportunities` & `matching` sebagai contoh pola — lengkapi modul lain secara bertahap)
+**Swagger UI:** `/api/docs` — JSDoc `@openapi` per-endpoint sudah lengkap (semua path
+& method di-cover) untuk: Auth, Profiles, Admin, Escrow, Verification, Notifications,
+Reviews (deal), Invitations, Chat, Opportunities, Content. Modul lain (Boost, Business
+Diagnosis, Decision, Fraud, Intent, Matching, Membership, Party, Pricing, Report) sudah
+punya sebagian `@openapi` dari sebelumnya — belum diverifikasi lengkap per-endpoint.
+Marketplace & Business Suite belum di-annotate `@openapi` sama sekali (hanya kontrak
+ringkas di tabel bawah) — lengkapi bertahap.
 
 ### Response Sukses
 ```json
@@ -134,6 +139,80 @@ Lihat [`docs/api/error-codes.md`](api/error-codes.md) untuk daftar lengkap `code
 | PATCH | `/admin/content/faq/:id` | Bearer + role ADMIN | Update FAQ |
 | DELETE | `/admin/content/faq/:id` | Bearer + role ADMIN | Hapus FAQ |
 | GET | `/health` | Publik | Health check |
+| GET | `/marketplace/products` | Publik | List produk marketplace (filter, search) |
+| GET | `/marketplace/products/:id` | Publik | Detail produk |
+| GET | `/marketplace/products/my/products` | Bearer (seller) | List produk milik sendiri |
+| POST | `/marketplace/products` | Bearer (seller) | Buat produk baru |
+| PATCH | `/marketplace/products/:id` | Bearer (owner) | Update produk |
+| DELETE | `/marketplace/products/:id` | Bearer (owner) | Hapus produk |
+| POST | `/marketplace/products/:id/media` | Bearer (owner) | Upload media produk (multipart `file`) |
+| DELETE | `/marketplace/products/:id/media/:mediaId` | Bearer (owner) | Hapus media produk |
+| PATCH | `/marketplace/products/:id/media/:mediaId/primary` | Bearer (owner) | Set media utama produk |
+| GET | `/marketplace/cart` | Bearer | Lihat keranjang milik sendiri |
+| POST | `/marketplace/cart/items` | Bearer | Tambah item ke keranjang |
+| PATCH | `/marketplace/cart/items/:itemId` | Bearer | Update qty item keranjang |
+| DELETE | `/marketplace/cart/items/:itemId` | Bearer | Hapus item dari keranjang |
+| DELETE | `/marketplace/cart` | Bearer | Kosongkan keranjang |
+| POST | `/marketplace/orders/checkout` | Bearer | Checkout keranjang → Order (+ sub-order per seller) |
+| GET | `/marketplace/orders/my/orders` | Bearer (buyer) | List order milik sendiri sebagai pembeli |
+| GET | `/marketplace/orders/my/sales` | Bearer (seller) | List sub-order milik sendiri sebagai penjual |
+| GET | `/marketplace/orders/:id` | Bearer (pihak terkait) | Detail Order |
+| PATCH | `/marketplace/orders/sub-orders/:subOrderId/status` | Bearer (seller) | Update status sub-order (proses/kirim/dst) |
+| POST | `/marketplace/orders/sub-orders/:subOrderId/confirm` | Bearer (buyer) | Konfirmasi barang diterima |
+| GET | `/marketplace/products/:productId/reviews` | Publik | List review sebuah produk |
+| POST | `/marketplace/products/:productId/reviews` | Bearer (buyer) | Beri review produk |
+| PATCH | `/marketplace/reviews/:reviewId` | Bearer (owner) | Update review produk sendiri |
+| DELETE | `/marketplace/reviews/:reviewId` | Bearer (owner) | Hapus review produk sendiri |
+| POST | `/escrow/hold` | Bearer (sesi terverifikasi) | Mulai hold dana escrow Buyer↔Seller Party |
+| GET | `/escrow` | Bearer | List Escrow milik Party sendiri |
+| GET | `/escrow/:id` | Bearer (partisipan) | Detail Escrow |
+| POST | `/escrow/:id/seller-confirm` | Bearer (Seller) | Konfirmasi Seller |
+| POST | `/escrow/:id/buyer-confirm` | Bearer (Buyer) | Konfirmasi Buyer |
+| POST | `/escrow/:id/release` | Bearer (Buyer) | Release dana ke Seller |
+| POST | `/escrow/:id/refund` | Bearer (partisipan) | Refund dana ke Buyer |
+| POST | `/escrow/:id/dispute` | Bearer (partisipan) | Ajukan dispute |
+
+**Business Suite** — party-scoped, hidup di bawah namespace `/parties/:partyId/...`
+yang sama dengan modul Party (lihat catatan mounting di `src/routes/v1/index.js`):
+
+| Method | Path | Auth | Deskripsi |
+|---|---|---|---|
+| GET | `/parties/:partyId/contacts` | Bearer | List kontak (customer/supplier) Party |
+| GET | `/parties/:partyId/contacts/:contactId` | Bearer | Detail kontak |
+| POST | `/parties/:partyId/contacts` | Bearer | Buat kontak baru |
+| PATCH | `/parties/:partyId/contacts/:contactId` | Bearer | Update kontak |
+| DELETE | `/parties/:partyId/contacts/:contactId` | Bearer | Hapus kontak |
+| GET | `/parties/:partyId/cashbook/summary` | Bearer | Ringkasan kas masuk/keluar |
+| GET | `/parties/:partyId/cashbook` | Bearer | List entri kas |
+| POST | `/parties/:partyId/cashbook` | Bearer | Tambah entri kas |
+| DELETE | `/parties/:partyId/cashbook/:entryId` | Bearer | Hapus entri kas |
+| GET | `/parties/:partyId/contacts/:contactId/receivable-card` | Bearer | Ringkasan piutang ke satu kontak |
+| GET | `/parties/:partyId/contacts/:contactId/receivable-card/entries` | Bearer | List entri piutang |
+| POST | `/parties/:partyId/contacts/:contactId/receivable-card/entries` | Bearer | Tambah entri piutang |
+| GET | `/parties/:partyId/contacts/:contactId/debt-card` | Bearer | Ringkasan hutang ke satu kontak |
+| GET | `/parties/:partyId/contacts/:contactId/debt-card/entries` | Bearer | List entri hutang |
+| POST | `/parties/:partyId/contacts/:contactId/debt-card/entries` | Bearer | Tambah entri hutang |
+| GET | `/parties/:partyId/inventory-cards` | Bearer | List semua kartu persediaan Party |
+| GET | `/parties/:partyId/products/:productId/inventory-card` | Bearer | Ringkasan persediaan satu produk |
+| GET | `/parties/:partyId/products/:productId/inventory-card/entries` | Bearer | List entri mutasi persediaan |
+| POST | `/parties/:partyId/products/:productId/inventory-card/entries` | Bearer | Tambah entri mutasi persediaan |
+| GET | `/parties/:partyId/tasks` | Bearer | List task Party |
+| GET | `/parties/:partyId/tasks/:taskId` | Bearer | Detail task |
+| POST | `/parties/:partyId/tasks` | Bearer | Buat task baru |
+| PATCH | `/parties/:partyId/tasks/:taskId` | Bearer | Update task |
+| DELETE | `/parties/:partyId/tasks/:taskId` | Bearer | Hapus task |
+| GET | `/parties/:partyId/agenda` | Bearer | List agenda/kalender Party |
+| GET | `/parties/:partyId/agenda/:agendaId` | Bearer | Detail agenda |
+| POST | `/parties/:partyId/agenda` | Bearer | Buat agenda baru |
+| PATCH | `/parties/:partyId/agenda/:agendaId` | Bearer | Update agenda |
+| DELETE | `/parties/:partyId/agenda/:agendaId` | Bearer | Hapus agenda |
+| GET | `/parties/:partyId/dashboard` | Bearer | Ringkasan dashboard Business Suite (cache) |
+| POST | `/parties/:partyId/dashboard/refresh` | Bearer | Paksa refresh cache dashboard |
+
+> Modul di atas (Marketplace, Escrow, Business Suite) belum punya JSDoc `@openapi`
+> lengkap per-endpoint (kecuali Escrow — lihat `src/modules/escrow/escrow.routes.js`);
+> tabel ini adalah kontrak sementara. Body/response detail: lihat masing-masing
+> `*.validation.js` dan `*.controller.js` di modul terkait.
 
 ## HTTP Status Reference
 

@@ -127,11 +127,13 @@ router.use('/marketplace', require('../../modules/marketplace/review/review.rout
 
 /**
  * Business Suite routes (MVP)
- * Mounted at /api/v1/business-suite
  *
- * Nested paths are party-scoped, e.g.:
- *   GET  /api/v1/business-suite/parties/:partyId/contacts
- *   POST /api/v1/business-suite/parties/:partyId/cashbook
+ * NOTE: these routers are mounted with `router.use(require(...))` — NO path
+ * prefix — so they hang directly off /api/v1, not /api/v1/business-suite
+ * (the folder name is organizational only). Actual paths are party-scoped
+ * under the existing /parties namespace, e.g.:
+ *   GET  /api/v1/parties/:partyId/contacts
+ *   POST /api/v1/parties/:partyId/cashbook
  */
 
 // Master data

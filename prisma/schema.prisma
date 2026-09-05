@@ -1960,7 +1960,3 @@ model CashEntry {
   @@map("cash_entries")
 }
 
-prisma.membership = {
-  ...prisma.membership,
-  findUnique: jest.fn(),
-};

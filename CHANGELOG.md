@@ -9,12 +9,20 @@ dan project ini mengikuti [Semantic Versioning](https://semver.org/).
 - Governance repo lengkap (LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CODEOWNERS)
 - Dokumen master checklist (`docs/PROJECT_CHECKLIST.md`)
 
+### Fixed
+- **`src/core/socket.js` — WS session revalidation tidak me-re-check status ban/suspend.**
+  `revalidateSession()` sebelumnya hanya memvalidasi token Supabase secara berkala;
+  akun yang di-ban/suspend admin di tengah sesi tetap bisa terus pakai koneksi WS
+  sampai token expire atau disconnect manual. Sekarang setiap siklus revalidasi
+  query ulang `profile.accountStatus` ke DB dan meng-evict sesi (`session:expired`,
+  code `ACCOUNT_BANNED` / `ACCOUNT_SUSPENDED`) begitu status berubah.
+- **`src/core/socket.js` — ban gate di handshake WS tidak pernah aktif.** Kode lama
+  mengecek `user.profile.status`, padahal field di `prisma/schema.prisma` bernama
+  `accountStatus` — kondisi `undefined === 'BANNED'` selalu `false`, jadi user
+  BANNED/SUSPENDED tetap lolos konek WebSocket. Diperbaiki ke `accountStatus`.
+
 ### Changed
-- `README.md`: sinkronkan tabel status Security dengan kode aktual — revalidasi JWT WS,
-  rate limit event WS (`message:send`/`typing:*`), dan sanitasi error socket
-  (`sanitizeError`) ternyata sudah terimplementasi, bukan lagi 🔴/🟡.
-  Sisa gap yang dikonfirmasi: `revalidateSession()` di `src/core/socket.js` baru
-  memvalidasi token, belum me-re-check `profile.status` (ban/suspend) secara berkala.
+- `README.md`: sinkronkan tabel status Security dengan kode aktual setelah patch di atas.
 
 ## [0.1.0] - 2026-08-01
 ### Added

@@ -180,6 +180,19 @@ function sanitizeError(err) {
 
 // ── Session revalidation ────────────────────────────────────────────────────
 
+function evictSession(socket, session, { reason, code, message }) {
+  logger.warn(`WS session evicted — ${reason}`, {
+    socketId: socket.id,
+    profileId: session.profileId,
+  });
+  bumpReason(stats.authFailures, reason);
+  socket.data = socket.data || {};
+  socket.data.evictReason = code;
+  socket.emit('session:expired', { code, message });
+  socket.disconnect(true);
+  stopRevalidation(socket.id);
+}
+
 async function revalidateSession(socket) {
   const session = activeSessions.get(socket.id);
   if (!session) return;
@@ -187,18 +200,37 @@ async function revalidateSession(socket) {
   try {
     const { data, error } = await supabaseAdmin.auth.getUser(session.token);
     if (error || !data?.user) {
-      logger.warn('WS session invalidated — token revoked or expired', {
-        socketId: socket.id,
-        profileId: session.profileId,
-      });
-      socket.data = socket.data || {};
-      socket.data.evictReason = 'SESSION_EXPIRED';
-      socket.emit('session:expired', {
+      evictSession(socket, session, {
+        reason: 'token_revoked_or_expired',
         code: 'SESSION_EXPIRED',
         message: 'Session expired. Please reconnect.',
       });
-      socket.disconnect(true);
-      stopRevalidation(socket.id);
+      return;
+    }
+
+    // Token can still be valid while an admin bans/suspends the account
+    // mid-session — re-check accountStatus against the DB on every
+    // revalidation pass, not just once at handshake time.
+    const profile = await prisma.profile.findUnique({
+      where: { id: session.profileId },
+      select: { accountStatus: true },
+    });
+
+    if (!profile) {
+      evictSession(socket, session, {
+        reason: 'profile_not_found',
+        code: 'SESSION_INVALID',
+        message: 'Profile no longer exists. Please reconnect.',
+      });
+      return;
+    }
+
+    if (profile.accountStatus === 'BANNED' || profile.accountStatus === 'SUSPENDED') {
+      evictSession(socket, session, {
+        reason: 'account_suspended',
+        code: profile.accountStatus === 'BANNED' ? 'ACCOUNT_BANNED' : 'ACCOUNT_SUSPENDED',
+        message: 'Your account access was revoked. Please contact support.',
+      });
     }
   } catch (e) {
     logger.error('WS revalidation error', {
@@ -206,7 +238,7 @@ async function revalidateSession(socket) {
       socketId: socket.id,
       profileId: session.profileId,
     });
-    // Do not disconnect on transient errors (network blip to Supabase)
+    // Do not disconnect on transient errors (network blip to Supabase/DB)
   }
 }
 
@@ -452,8 +484,13 @@ function initSocket(httpServer) {
         return next(new Error('Profile not found. Complete registration first.'));
       }
 
-      // Optional ban gate — only if profile exposes a status field
-      if (user.profile.status === 'BANNED' || user.profile.status === 'SUSPENDED') {
+      // Ban/suspend gate. NOTE: the Profile model field is `accountStatus`
+      // (see prisma/schema.prisma), not `status` — this previously checked
+      // a field that never exists on the object, so it never fired.
+      if (
+        user.profile.accountStatus === 'BANNED'
+        || user.profile.accountStatus === 'SUSPENDED'
+      ) {
         bumpReason(stats.authFailures, 'account_suspended');
         return next(new Error('Account suspended'));
       }

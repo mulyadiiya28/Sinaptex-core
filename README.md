@@ -75,10 +75,10 @@ Detail go-live ops juga ada di **`docs/GO_LIVE.md`**.
 | Batas koneksi WS per profile (kick oldest) | ✅ | Env: `WS_MAX_CONNECTIONS_PER_PROFILE` |
 | `maxHttpBufferSize` + Origin check WS | ✅ | |
 | Revalidasi JWT berkala pada koneksi WS panjang | ✅ | `startRevalidation()` re-check token tiap interval via Supabase |
-| **Re-check status ban/suspend saat revalidasi WS** | 🔴 | `revalidateSession()` baru cek validitas **token**, belum query ulang `profile.status` — jadi kalau admin ban user di tengah sesi, koneksi tetap hidup sampai token expire/disconnect. Cek ban baru jalan di **handshake awal** — **penting MVP** |
+| Re-check status ban/suspend saat revalidasi WS | ✅ | **Patch:** `revalidateSession()` sekarang query ulang `profile.accountStatus` ke DB tiap interval, bukan cuma validitas token — sesi otomatis di-evict (`session:expired`, code `ACCOUNT_BANNED`/`ACCOUNT_SUSPENDED`) begitu admin ban/suspend, tanpa perlu tunggu token expire |
 | Rate limit event WS (`message:send`, `typing:*`) | ✅ | `WsRateLimiter` in-memory per profile, lihat `WS_RL_*` di env |
 | Error generik ke client di production (jangan `err.message` mentah) | ✅ | `sanitizeError()` diterapkan di semua handler socket (`message:send`, `conversation:read`, handshake) |
-| Tolak user `BANNED` / `SUSPENDED` di handshake WS | ✅ | Dicek di middleware auth Socket.IO sebelum `next()` |
+| Tolak user `BANNED` / `SUSPENDED` di handshake WS | ✅ | **Bug fix:** sebelumnya cek `user.profile.status` (field itu tidak ada di schema — selalu `undefined`, jadi gate ini tidak pernah aktif). Sudah diperbaiki ke `user.profile.accountStatus`, field yang benar sesuai `prisma/schema.prisma` |
 | Webhook Midtrans signature + amount check | ✅ kode | Uji di sandbox/prod masih ops |
 | Secrets tidak di Git; rotasi jika pernah bocor | 🔴 ops | Redis/Midtrans/Supabase |
 | WSS (TLS) di production | 🔴 ops | Jangan `ws://` publik |
@@ -143,10 +143,9 @@ Env terkait WS: lihat `.env.example` (`WS_*`).
 ### F. Urutan saran sebelum soft-launch publik
 
 1. Ops: DB + Redis + migrate/seed + CORS + Midtrans webhook (blokir go-live)
-2. Security kode: re-check ban/suspend saat revalidasi sesi WS (bukan cuma validitas token)
-3. Ops: WSS + `proxy_read_timeout` ≥ 90s
-4. QA manual: auth → opportunity → match → chat → notifikasi → (opsional) membership sandbox
-5. Pantau `GET /api/v1/health` (termasuk `socket`) 24–48 jam
+2. Ops: WSS + `proxy_read_timeout` ≥ 90s
+3. QA manual: auth → opportunity → match → chat → notifikasi → (opsional) membership sandbox
+4. Pantau `GET /api/v1/health` (termasuk `socket`) 24–48 jam
 
 ---
 
@@ -198,12 +197,12 @@ Default env / admin override (`GET|PATCH /admin/settings/chat-rate-limit`):
 ## 4. Keamanan (ringkas)
 
 CORS whitelist, Supabase JWT, RBAC ADMIN, Zod, rate limit global/intent/webhook/report,
-chat anti-spam, webhook payment hardened, account suspend/ban di handshake WS,
-revalidasi sesi WS berkala, rate limit event WS, error generik ke client (`sanitizeError`),
-batas koneksi WebSocket + heartbeat + kompresi frame.
+chat anti-spam, webhook payment hardened, account suspend/ban di handshake WS + revalidasi
+berkala (re-check `accountStatus` ke DB, bukan cuma token), rate limit event WS,
+error generik ke client (`sanitizeError`), batas koneksi WebSocket + heartbeat + kompresi frame.
 
-Hardening yang masih terbuka untuk MVP: **re-check status ban/suspend saat revalidasi sesi WS**
-(saat ini revalidasi hanya memvalidasi token, bukan status akun terbaru) — lihat tabel Security di atas.
+Semua item hardening WS yang sebelumnya tercatat 🔴/🟡 di tabel Security sudah dipatch —
+lihat `CHANGELOG.md` untuk detail perbaikannya.
 
 ---
 

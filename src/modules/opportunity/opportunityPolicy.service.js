@@ -93,7 +93,7 @@ async function defaultMembershipChecker(profileId) {
     if (membershipModel && typeof membershipModel.findFirst === 'function') {
       const membership = await membershipModel.findFirst({
         where: {
-          profileId: profileId,
+          profileId,
           status: 'ACTIVE'
         }
       });

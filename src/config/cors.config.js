@@ -47,23 +47,24 @@ function compileRules(rawOrigins) {
   const patterns = [];
 
   for (const allowed of rawOrigins) {
-    if (!allowed) continue;
-    const normalized = allowed.toLowerCase().trim();
-    if (normalized === '*') continue;
+    if (allowed) {
+      const normalized = allowed.toLowerCase().trim();
+      if (normalized !== '*') {
+        let domain = normalized;
+        if (domain.startsWith('https://')) domain = domain.slice(8);
+        if (domain.startsWith('http://')) domain = domain.slice(7);
 
-    let domain = normalized;
-    if (domain.startsWith('https://')) domain = domain.slice(8);
-    if (domain.startsWith('http://')) domain = domain.slice(7);
-
-    if (domain.startsWith('*.')) {
-      const rootDomain = domain.slice(2);
-      const escapedDomain = escapeRegex(rootDomain);
-      patterns.push(new RegExp(`^https?:\\/\\/([a-zA-Z0-9-]+\\.)*${escapedDomain}(:\\d+)?$`));
-    } else {
-      exactMatches.add(normalized);
-      if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
-        exactMatches.add(`https://${normalized}`);
-        exactMatches.add(`http://${normalized}`);
+        if (domain.startsWith('*.')) {
+          const rootDomain = domain.slice(2);
+          const escapedDomain = escapeRegex(rootDomain);
+          patterns.push(new RegExp(`^https?:\\/\\/([a-zA-Z0-9-]+\\.)*${escapedDomain}(:\\d+)?$`));
+        } else {
+          exactMatches.add(normalized);
+          if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+            exactMatches.add(`https://${normalized}`);
+            exactMatches.add(`http://${normalized}`);
+          }
+        }
       }
     }
   }

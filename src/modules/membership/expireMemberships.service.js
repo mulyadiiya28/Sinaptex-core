@@ -1,12 +1,9 @@
 let prisma;
+
 try {
-  prisma = require('../../config/database').prisma;
+  prisma = require('../../config/prisma');
 } catch {
-  try {
-    prisma = require('../../config/prisma').prisma || require('../../config/prisma');
-  } catch {
-    prisma = {};
-  }
+  prisma = {};
 }
 
 const logger = require('../../core/logger');
@@ -190,7 +187,7 @@ async function expireMembershipsAndTransitionTier(options = {}) {
 
   logger.info(
     `Systematically transitioned ${expiredMemberships.length} expired membership(s) to Non-Member tier. ` +
-      `Suspended/Closed ${totalClosedOffers} excess Offer(s) and ${totalClosedNeeds} excess Need(s).`
+    `Suspended/Closed ${totalClosedOffers} excess Offer(s) and ${totalClosedNeeds} excess Need(s).`
   );
 
   return {

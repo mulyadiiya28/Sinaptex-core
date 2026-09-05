@@ -1,13 +1,10 @@
 // src/middlewares/verifiedSession.middleware.js
 let prisma;
+
 try {
-  prisma = require('../config/database').prisma;
+  prisma = require('../config/prisma');
 } catch {
-  try {
-    prisma = require('../config/prisma').prisma || require('../config/prisma');
-  } catch {
-    prisma = {};
-  }
+  prisma = {};
 }
 
 let supabaseAdmin;
@@ -37,9 +34,8 @@ function isSessionVerified(supabaseUser, profile = null) {
     return {
       verified: false,
       isVerified: false,
-      reason: `Akun Anda ditangguhkan sementara${
-        profile.suspendedReason ? `: ${profile.suspendedReason}` : '.'
-      }`,
+      reason: `Akun Anda ditangguhkan sementara${profile.suspendedReason ? `: ${profile.suspendedReason}` : '.'
+        }`,
       code: ErrorCodes.ACCOUNT_SUSPENDED || 'ACCOUNT_SUSPENDED',
     };
   }
@@ -63,9 +59,9 @@ function isSessionVerified(supabaseUser, profile = null) {
 
   const isEmailConfirmed = Boolean(
     supabaseUser.email_confirmed_at ||
-      supabaseUser.confirmed_at ||
-      isOAuthUser ||
-      isVerifiedOAuthIdentity
+    supabaseUser.confirmed_at ||
+    isOAuthUser ||
+    isVerifiedOAuthIdentity
   );
 
   const isPhoneConfirmed = Boolean(supabaseUser.phone_confirmed_at);
@@ -152,7 +148,6 @@ async function handleVerifiedSession(req, res, next, options = {}) {
       );
     }
 
-    // Explicit test requirement flag
     if (req.shouldFailOnUserNotFound) {
       return next(
         ApiError.unauthorized(
@@ -163,10 +158,8 @@ async function handleVerifiedSession(req, res, next, options = {}) {
       );
     }
 
-    let profile = req.profile;
-    let user = req.user;
+    let { profile, user } = req;
 
-    // Fetch user/profile from DB if not already present on req
     if (!profile && !user && prisma && typeof prisma === 'object') {
       if (prisma.user && typeof prisma.user.findUnique === 'function') {
         try {
@@ -238,7 +231,7 @@ async function handleVerifiedSession(req, res, next, options = {}) {
       return next(
         ApiError.forbidden(
           verificationCheck.reason ||
-            'Verified user session is required to perform this operation.',
+          'Verified user session is required to perform this operation.',
           null,
           verificationCheck.code || ErrorCodes.UNVERIFIED_SESSION || 'UNVERIFIED_SESSION'
         )
@@ -262,19 +255,17 @@ async function handleVerifiedSession(req, res, next, options = {}) {
   }
 }
 
-function requireVerifiedSession(options = {}) {
-  if (options && options.headers && typeof options.headers === 'object' && typeof arguments[2] === 'function') {
-    return handleVerifiedSession(options, arguments[1], arguments[2], {});
+function requireVerifiedSession(options = {}, ...args) {
+  if (options && options.headers && typeof options.headers === 'object' && typeof args[1] === 'function') {
+    return handleVerifiedSession(options, args[0], args[1], {});
   }
 
-  return (req, res, next) => {
-    return handleVerifiedSession(req, res, next, options);
-  };
+  return (req, res, next) => handleVerifiedSession(req, res, next, options);
 }
 
-function protectStateChanges(options = {}) {
-  if (options && options.headers && typeof options.headers === 'object' && typeof arguments[2] === 'function') {
-    return handleVerifiedSession(options, arguments[1], arguments[2], {
+function protectStateChanges(options = {}, ...args) {
+  if (options && options.headers && typeof options.headers === 'object' && typeof args[1] === 'function') {
+    return handleVerifiedSession(options, args[0], args[1], {
       protectStateChangesOnly: true,
       requireEmailVerified: true,
     });

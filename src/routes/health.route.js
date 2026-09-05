@@ -1,20 +1,27 @@
+const express = require('express');
+const router = express.Router();
 const prisma = require('../config/prisma');
 const cache = require('../core/cache');
 const { getSocketStats } = require('../core/socket');
 
-// Helper agar async check tidak menggantung terlalu lama
-const withTimeout = (promise, ms) => {
-  return Promise.race([
+// Helper dengan implisit return (arrow-body-style) dan parameter `ms` yang digunakan (no-unused-vars)
+const withTimeout = (promise, ms) =>
+  Promise.race([
     promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout')), ms);
+    }),
   ]);
-};
 
-module.exports = async function healthCheck(req, res) {
+// Liveness Check (tanpa block statement `{}` agar memenuhi arrow-body-style)
+const liveness = (req, res) =>
+  res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
+
+// Readiness Check
+const readiness = async (req, res) => {
   let healthy = true;
   const checks = { database: 'unknown', redis: 'unknown' };
 
-  // 1. Cek Database dengan Timeout 2 detik
   try {
     await withTimeout(prisma.$queryRaw`SELECT 1`, 2000);
     checks.database = 'ok';
@@ -23,12 +30,11 @@ module.exports = async function healthCheck(req, res) {
     healthy = false;
   }
 
-  // 2. Cek Redis dengan Timeout 1 detik
   try {
     const client = cache.getClient && cache.getClient();
     if (client) {
       const pong = await withTimeout(client.ping(), 1000);
-      checks.redis = (pong === 'PONG' || pong === 'pong') ? 'ok' : 'error';
+      checks.redis = pong === 'PONG' || pong === 'pong' ? 'ok' : 'error';
     } else {
       checks.redis = 'disabled';
     }
@@ -36,7 +42,6 @@ module.exports = async function healthCheck(req, res) {
     checks.redis = 'error';
   }
 
-  // 3. Ringkasan Socket
   let socket = null;
   try {
     const stats = getSocketStats();
@@ -48,8 +53,7 @@ module.exports = async function healthCheck(req, res) {
     socket = { status: 'unavailable' };
   }
 
-  // Tetap kembalikan 200 agar platform TIDAK mengirim SIGTERM jika DB/Redis hanya butuh waktu sejenak untuk konek
-  res.status(200).json({
+  res.status(healthy ? 200 : 503).json({
     success: healthy,
     status: healthy ? 'HEALTHY' : 'DEGRADED',
     checks,
@@ -57,3 +61,8 @@ module.exports = async function healthCheck(req, res) {
     timestamp: new Date().toISOString(),
   });
 };
+
+router.get('/live', liveness);
+router.get('/ready', readiness);
+
+module.exports = router;

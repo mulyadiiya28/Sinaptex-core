@@ -1,7 +1,6 @@
 const prisma = require('../../../config/prisma');
 const ApiError = require('../../../utils/apiError');
 const ErrorCodes = require('../../../utils/errorCodes');
-const logger = require('../../../core/logger');
 
 async function getOrCreateCart(profileId) {
   let cart = await prisma.cart.findUnique({

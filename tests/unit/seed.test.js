@@ -1,5 +1,3 @@
-const { PrismaClient } = require('@prisma/client');
-
 describe('Database Seeder Definition and Scripts', () => {
   it('defines package.json seed script properly', () => {
     const pkg = require('../../package.json');

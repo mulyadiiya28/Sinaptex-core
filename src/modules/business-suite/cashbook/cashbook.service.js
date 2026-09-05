@@ -1,7 +1,6 @@
 const prisma = require('../../../config/prisma');
 const ApiError = require('../../../utils/apiError');
 const ErrorCodes = require('../../../utils/errorCodes');
-const logger = require('../../../core/logger');
 const config = require('../../../config/businessSuite.config');
 
 async function getOrCreateCashBook(partyId) {

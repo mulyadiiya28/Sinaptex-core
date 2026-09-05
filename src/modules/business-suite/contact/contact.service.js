@@ -2,7 +2,6 @@ const prisma = require('../../../config/prisma');
 const ApiError = require('../../../utils/apiError');
 const ErrorCodes = require('../../../utils/errorCodes');
 const config = require('../../../config/businessSuite.config');
-const logger = require('../../../core/logger');
 const { eventBus, EVENTS } = require('../../../core/eventBus');
 
 async function createContact(data) {
@@ -10,20 +9,35 @@ async function createContact(data) {
 
   // Check limit
   const count = await prisma.contact.count({ where: { partyId, type } });
-  const limit = type === 'CUSTOMER' ? config.masterData.maxCustomersPerParty
-    : type === 'SUPPLIER' ? config.masterData.maxSuppliersPerParty
-    : type === 'DEBTOR' ? config.masterData.maxDebtorsPerParty
-    : config.masterData.maxCreditorsPerParty;
+  let limit;
+
+  if (type === "CUSTOMER") {
+    limit = config.masterData.maxCustomersPerParty;
+  } else if (type === "SUPPLIER") {
+    limit = config.masterData.maxSuppliersPerParty;
+  } else if (type === "DEBTOR") {
+    limit = config.masterData.maxDebtorsPerParty;
+  } else {
+    limit = config.masterData.maxCreditorsPerParty;
+  }
 
   if (count >= limit) {
     throw ApiError.badRequest(`Batas maksimal ${type.toLowerCase()} tercapai (${limit})`, ErrorCodes.VALIDATION_ERROR);
   }
 
-  // Auto-generate code if not provided
   if (!data.code) {
-    const prefix = type === 'CUSTOMER' ? 'CUST' : type === 'SUPPLIER' ? 'SUP' : type === 'DEBTOR' ? 'DBT' : 'CRD';
+    let prefix = "CRD";
+
+    if (type === "CUSTOMER") {
+      prefix = "CUST";
+    } else if (type === "SUPPLIER") {
+      prefix = "SUP";
+    } else if (type === "DEBTOR") {
+      prefix = "DBT";
+    }
+
     const nextNum = count + 1;
-    data.code = `${prefix}-${String(nextNum).padStart(3, '0')}`;
+    data.code = `${prefix}-${String(nextNum).padStart(3, "0")}`;
   }
 
   const contact = await prisma.contact.create({ data });

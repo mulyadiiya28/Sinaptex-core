@@ -1,11 +1,10 @@
 const prisma = require('../../../config/prisma');
 const ApiError = require('../../../utils/apiError');
 const ErrorCodes = require('../../../utils/errorCodes');
-const logger = require('../../../core/logger');
 
 // Lazy import to prevent circular dependency
 async function checkIsMember(profileId) {
-  const membershipService = require('../membership/membership.service');
+  const membershipService = require('../../membership/membership.service');
   return membershipService.hasActiveMembership(profileId);
 }
 

@@ -1,7 +1,4 @@
 const prisma = require('../../../config/prisma');
-const ApiError = require('../../../utils/apiError');
-const ErrorCodes = require('../../../utils/errorCodes');
-const logger = require('../../../core/logger');
 
 async function getOrCreateCard(partyId, contactId) {
   let card = await prisma.receivableCard.findUnique({
@@ -16,6 +13,7 @@ async function getOrCreateCard(partyId, contactId) {
 }
 
 async function addEntry(data) {
+  // eslint-disable-next-line max-len
   const { partyId, contactId, date, description, referenceNo, referenceType, referenceId, debit, credit, createdBy } = data;
 
   return prisma.$transaction(async (tx) => {

@@ -16,8 +16,6 @@
  *   node prisma/seed.js
  */
 
-const { PrismaClient } = require('@prisma/client');
-
 const prisma = new PrismaClient();
 
 // ---------------------------------------------------------------------------
@@ -80,11 +78,13 @@ async function seedBoostPlans() {
     { type: 'VIP', name: 'VIP Boost', priorityWeight: 100, price: 399000, durationDays: 30 },
   ];
 
-  for (const plan of plans) {
+  for (let i = 0; i < plans.length; i++) {
+    let item = plans[i];
+
     await prisma.boostPlan.upsert({
-      where: { type: plan.type },
-      update: plan,
-      create: plan,
+      where: { type: item.type },
+      update: item,
+      create: item,
     });
   }
   console.log('  ✓ Boost plans seeded');
@@ -130,14 +130,14 @@ async function seedCategories() {
     },
   ];
 
-  for (const cat of defaultCategories) {
+  for (let item of defaultCategories) {
     const parent = await prisma.category.upsert({
-      where: { name: cat.name },
+      where: { name: item.name },
       update: {},
-      create: { name: cat.name },
+      create: { name: item.name },
     });
 
-    for (const childName of cat.children || []) {
+    for (let childName of item.children || []) {
       await prisma.category.upsert({
         where: { name: childName },
         update: { parentId: parent.id },
@@ -163,12 +163,13 @@ async function seedCapabilitiesAndTags() {
     'Payment Gateway Integration',
     'White-label Service',
   ];
+  for (let i = 0; i < standardCapabilities.length; i++) {
+    let item = standardCapabilities[i];
 
-  for (const name of standardCapabilities) {
     await prisma.capability.upsert({
-      where: { name },
+      where: { name: item },
       update: {},
-      create: { name },
+      create: { name: item },
     });
   }
 
@@ -189,11 +190,11 @@ async function seedCapabilitiesAndTags() {
     'high-volume',
   ];
 
-  for (const name of baseTags) {
+  for (let item of baseTags) {
     await prisma.tag.upsert({
-      where: { name },
+      where: { name: item },
       update: {},
-      create: { name },
+      create: { name: item },
     });
   }
   console.log('  ✓ Capabilities and tags master data seeded');
@@ -209,11 +210,13 @@ async function seedGeoCurrencyLanguage() {
   const provinces = ['DKI Jakarta', 'Jawa Barat', 'Jawa Tengah', 'Jawa Timur', 'Banten', 'Bali'];
   const provinceRecords = {};
 
-  for (const name of provinces) {
-    provinceRecords[name] = await prisma.province.upsert({
-      where: { countryId_name: { countryId: indonesia.id, name } },
+  for (let i = 0; i < provinces.length; i++) {
+    let item = provinces[i];
+
+    provinceRecords[item] = await prisma.province.upsert({
+      where: { countryId_name: { countryId: indonesia.id, name: item } },
       update: {},
-      create: { name, countryId: indonesia.id },
+      create: { name: item, countryId: indonesia.id },
     });
   }
 
@@ -226,9 +229,17 @@ async function seedGeoCurrencyLanguage() {
     Bali: ['Denpasar', 'Badung', 'Gianyar'],
   };
 
-  for (const [provinceName, cityNames] of Object.entries(cities)) {
+  let entries = Object.entries(cities);
+
+  for (let i = 0; i < entries.length; i++) {
+    let item = entries[i];
+    let provinceName = item[0];
+    let cityNames = item[1];
     const province = provinceRecords[provinceName];
-    for (const cityName of cityNames) {
+
+    for (let j = 0; j < cityNames.length; j++) {
+      let cityName = cityNames[j];
+
       await prisma.city.upsert({
         where: { provinceId_name: { provinceId: province.id, name: cityName } },
         update: {},
@@ -242,11 +253,13 @@ async function seedGeoCurrencyLanguage() {
     { code: 'USD', name: 'US Dollar', symbol: '$' },
     { code: 'SGD', name: 'Singapore Dollar', symbol: 'S$' },
   ];
-  for (const c of currencies) {
+  for (let i = 0; i < currencies.length; i++) {
+    let item = currencies[i];
+
     await prisma.currency.upsert({
-      where: { code: c.code },
-      update: c,
-      create: c,
+      where: { code: item.code },
+      update: item,
+      create: item,
     });
   }
 
@@ -254,11 +267,13 @@ async function seedGeoCurrencyLanguage() {
     { code: 'id', name: 'Bahasa Indonesia' },
     { code: 'en', name: 'English' },
   ];
-  for (const l of languages) {
+  for (let i = 0; i < languages.length; i++) {
+    let item = languages[i];
+
     await prisma.language.upsert({
-      where: { code: l.code },
-      update: l,
-      create: l,
+      where: { code: item.code },
+      update: item,
+      create: item,
     });
   }
   console.log('  ✓ Geographic, currency, and language master data seeded');
@@ -313,17 +328,19 @@ async function seedMembership() {
     },
   ];
 
-  for (const planData of membershipPlans) {
+  for (let i = 0; i < membershipPlans.length; i++) {
+    let item = membershipPlans[i];
+
     const plan = await prisma.membershipPlan.upsert({
-      where: { name: planData.name },
+      where: { name: item.name },
       update: {
-        durationDays: planData.durationDays,
-        features: planData.features,
+        durationDays: item.durationDays,
+        features: item.features,
       },
       create: {
-        name: planData.name,
-        durationDays: planData.durationDays,
-        features: planData.features,
+        name: item.name,
+        durationDays: item.durationDays,
+        features: item.features,
       },
     });
 
@@ -335,7 +352,7 @@ async function seedMembership() {
       await prisma.membershipPricing.create({
         data: {
           planId: plan.id,
-          price: planData.price,
+          price: item.price,
           currency: 'IDR',
           status: 'ACTIVE',
         },
@@ -364,7 +381,7 @@ async function seedDiagnosisKnowledgeBase() {
   const drillJob = await findOrCreateJob(
     drillProblem.id,
     'Ketika saya perlu memasang sesuatu di dinding/permukaan keras, saya ingin membuat lubang ' +
-      'dengan cepat dan presisi, supaya barang itu bisa terpasang kuat.'
+    'dengan cepat dan presisi, supaya barang itu bisa terpasang kuat.'
   );
 
   const drillCategory = await prisma.solutionCategory.upsert({
@@ -409,7 +426,7 @@ async function seedDiagnosisKnowledgeBase() {
   const shelterJob = await findOrCreateJob(
     shelterProblem.id,
     'Ketika saya belum punya tempat tinggal tetap, saya ingin unit hunian yang aman dan nyaman, ' +
-      'supaya saya dan keluarga punya tempat berteduh.',
+    'supaya saya dan keluarga punya tempat berteduh.',
     [
       'Apakah Anda saat ini belum punya tempat tinggal tetap?',
       'Apakah properti ini untuk ditinggali sendiri/keluarga, bukan disewakan?',
@@ -419,7 +436,7 @@ async function seedDiagnosisKnowledgeBase() {
   const statusJob = await findOrCreateJob(
     shelterProblem.id,
     'Ketika saya ingin dipandang mapan secara sosial, saya ingin properti di lokasi/segmen tertentu, ' +
-      'supaya saya mendapat pengakuan status sosial.',
+    'supaya saya mendapat pengakuan status sosial.',
     [
       'Apakah lokasi/prestise lingkungan jadi pertimbangan utama Anda?',
       'Apakah properti ini penting untuk ditunjukkan/dipamerkan ke orang lain?',
@@ -429,18 +446,23 @@ async function seedDiagnosisKnowledgeBase() {
   const investmentJob = await findOrCreateJob(
     shelterProblem.id,
     'Ketika saya punya kelebihan dana, saya ingin aset yang nilainya naik atau bisa disewakan, ' +
-      'supaya uang saya bekerja sebagai investasi.',
+    'supaya uang saya bekerja sebagai investasi.',
     [
       'Apakah Anda berencana menyewakan atau menjual kembali properti ini?',
       'Apakah keputusan ini murni pertimbangan return finansial, bukan untuk ditinggali?',
     ]
   );
 
-  for (const [job, relevance] of [
+  const jobMappings = [
     [shelterJob, 1],
     [statusJob, 0.8],
     [investmentJob, 0.9],
-  ]) {
+  ];
+
+  for (let i = 0; i < jobMappings.length; i++) {
+    let item = jobMappings[i];
+    let [job, relevance] = item;
+
     await prisma.solutionCategoryJob.upsert({
       where: {
         solutionCategoryId_jobId: {
@@ -468,7 +490,7 @@ async function seedDiagnosisKnowledgeBase() {
   const crmJob = await findOrCreateJob(
     crmProblem.id,
     'Ketika saya punya banyak calon pelanggan yang harus di-follow up, saya ingin sistem pencatatan ' +
-      'dan pengingat otomatis, supaya tidak ada follow-up yang bocor dan penjualan hilang sia-sia.'
+    'dan pengingat otomatis, supaya tidak ada follow-up yang bocor dan penjualan hilang sia-sia.'
   );
 
   const crmCategory = await prisma.solutionCategory.upsert({
@@ -566,7 +588,7 @@ async function seedDiagnosisKnowledgeBase() {
   const salesTrainingJob = await findOrCreateJob(
     salesSkillProblem.id,
     'Ketika staff penjualan kesulitan closing deal, saya ingin mereka dilatih teknik penjualan yang efektif, ' +
-      'supaya conversion rate meningkat.'
+    'supaya conversion rate meningkat.'
   );
 
   const salesTrainingCategory = await prisma.solutionCategory.upsert({
@@ -776,8 +798,9 @@ async function seedCmsLegalAndFaq() {
     },
   ];
 
-  for (const page of staticPages) {
-    await upsertStaticPage(page);
+  for (let i = 0; i < staticPages.length; i++) {
+    let item = staticPages[i];
+    await upsertStaticPage(item);
   }
 
   const faqItems = [
@@ -810,8 +833,9 @@ async function seedCmsLegalAndFaq() {
     },
   ];
 
-  for (const faq of faqItems) {
-    await upsertFaq(faq);
+  for (let i = 0; i < faqItems.length; i++) {
+    let item = faqItems[i];
+    await upsertFaq(item);
   }
 
   const publishedPages = await prisma.staticPage.count({
@@ -954,67 +978,71 @@ async function seedTestUsers() {
     },
   ];
 
-  for (const config of testUserConfigs) {
+  for (let i = 0; i < testUserConfigs.length; i++) {
+    let item = testUserConfigs[i];
+
     const user = await prisma.user.upsert({
-      where: { email: config.email },
-      update: { supabaseId: config.supabaseId, phone: config.phone },
+      where: { email: item.email },
+      update: { supabaseId: item.supabaseId, phone: item.phone },
       create: {
-        supabaseId: config.supabaseId,
-        email: config.email,
-        phone: config.phone,
+        supabaseId: item.supabaseId,
+        email: item.email,
+        phone: item.phone,
       },
     });
 
     const profile = await prisma.profile.upsert({
       where: { userId: user.id },
       update: {
-        fullName: config.fullName,
-        bio: config.bio,
-        location: config.location,
-        phone: config.phone,
-        accountStatus: config.accountStatus,
-        verificationStatus: config.verificationStatus,
-        reputationScore: config.reputationScore,
-        trustScore: config.trustScore,
+        fullName: item.fullName,
+        bio: item.bio,
+        location: item.location,
+        phone: item.phone,
+        accountStatus: item.accountStatus,
+        verificationStatus: item.verificationStatus,
+        reputationScore: item.reputationScore,
+        trustScore: item.trustScore,
       },
       create: {
         userId: user.id,
-        fullName: config.fullName,
-        bio: config.bio,
-        location: config.location,
-        phone: config.phone,
-        accountStatus: config.accountStatus,
-        verificationStatus: config.verificationStatus,
-        reputationScore: config.reputationScore,
-        trustScore: config.trustScore,
+        fullName: item.fullName,
+        bio: item.bio,
+        location: item.location,
+        phone: item.phone,
+        accountStatus: item.accountStatus,
+        verificationStatus: item.verificationStatus,
+        reputationScore: item.reputationScore,
+        trustScore: item.trustScore,
       },
     });
 
     let partyRecord = null;
-    if (config.party) {
+    if (item.party) {
       partyRecord = await prisma.party.findFirst({
-        where: { ownerId: profile.id, name: config.party.name },
+        where: { ownerId: profile.id, name: item.party.name },
       });
 
       if (!partyRecord) {
         partyRecord = await prisma.party.create({
           data: {
             ownerId: profile.id,
-            name: config.party.name,
-            isCompany: config.party.isCompany,
-            categoryId: config.party.categoryId,
-            description: config.party.description,
-            location: config.party.location,
-            npwp: config.party.npwp,
-            nib: config.party.nib,
-            verificationStatus: config.party.verificationStatus,
+            name: item.party.name,
+            isCompany: item.party.isCompany,
+            categoryId: item.party.categoryId,
+            description: item.party.description,
+            location: item.party.location,
+            npwp: item.party.npwp,
+            nib: item.party.nib,
+            verificationStatus: item.party.verificationStatus,
           },
         });
       }
     }
 
-    if (config.roles && config.roles.length) {
-      for (const role of config.roles) {
+    if (item.roles && item.roles.length) {
+      for (let j = 0; j < item.roles.length; j++) {
+        let role = item.roles[j];
+
         const existingRole = await prisma.businessRole.findFirst({
           where: {
             profileId: profile.id,
@@ -1034,44 +1062,44 @@ async function seedTestUsers() {
       }
     }
 
-    if (config.membership) {
+    if (item.membership) {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
       await prisma.membership.upsert({
         where: { profileId: profile.id },
         update: {
-          status: config.membership.status,
+          status: item.membership.status,
           activatedAt: now,
           expiresAt,
         },
         create: {
           profileId: profile.id,
-          status: config.membership.status,
+          status: item.membership.status,
           activatedAt: now,
           expiresAt,
         },
       });
     }
 
-    if (config.opportunity && partyRecord) {
+    if (item.opportunity && partyRecord) {
       const existingOpp = await prisma.opportunity.findFirst({
-        where: { partyId: partyRecord.id, title: config.opportunity.title },
+        where: { partyId: partyRecord.id, title: item.opportunity.title },
       });
 
       if (!existingOpp) {
         await prisma.opportunity.create({
           data: {
             partyId: partyRecord.id,
-            type: config.opportunity.type,
-            title: config.opportunity.title,
-            description: config.opportunity.description,
-            budgetMin: config.opportunity.budgetMin,
-            budgetMax: config.opportunity.budgetMax,
-            priority: config.opportunity.priority,
-            visibility: config.opportunity.visibility,
+            type: item.opportunity.type,
+            title: item.opportunity.title,
+            description: item.opportunity.description,
+            budgetMin: item.opportunity.budgetMin,
+            budgetMax: item.opportunity.budgetMax,
+            priority: item.opportunity.priority,
+            visibility: item.opportunity.visibility,
             status: 'ACTIVE',
-            tags: config.opportunity.tags || [],
+            tags: item.opportunity.tags || [],
             location: partyRecord.location,
             categoryId: partyRecord.categoryId,
           },
@@ -1079,7 +1107,6 @@ async function seedTestUsers() {
       }
     }
   }
-
   console.log('  ✓ Test users seeded');
 }
 

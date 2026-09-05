@@ -3,12 +3,11 @@ const ApiError = require('../../../utils/apiError');
 const ErrorCodes = require('../../../utils/errorCodes');
 const logger = require('../../../core/logger');
 const cache = require('../../../core/cache');
-const cacheConfig = require('../../../config/cache.config');
 const { uploadBuffer, deleteAsset } = require('../../../utils/cloudinaryUpload');
 
 const PRODUCT_LIST_CACHE_TTL = 60; // seconds
 
-async function createProduct(data, profileId) {
+async function createProduct(data, _profileId) {
   const { variants, ...productData } = data;
 
   return prisma.$transaction(async (tx) => {
@@ -196,12 +195,12 @@ async function setPrimaryMedia(mediaId, productId) {
   await invalidateProductCaches();
 }
 
-async function listMyProducts(profileId, { page = 1, limit = 20 } = {}) {
+async function listMyProducts(_profileId, { page = 1, limit = 20 } = {}) {
   const skip = (page - 1) * limit;
 
   const [items, total] = await Promise.all([
     prisma.product.findMany({
-      where: { party: { ownerId: profileId } },
+      where: { party: { ownerId: _profileId } },
       include: {
         media: { orderBy: { isPrimary: 'desc' }, take: 1 },
         variants: { where: { isActive: true } },
@@ -211,7 +210,7 @@ async function listMyProducts(profileId, { page = 1, limit = 20 } = {}) {
       skip,
       take: limit,
     }),
-    prisma.product.count({ where: { party: { ownerId: profileId } } }),
+    prisma.product.count({ where: { party: { ownerId: _profileId } } }),
   ]);
 
   return {
@@ -220,7 +219,7 @@ async function listMyProducts(profileId, { page = 1, limit = 20 } = {}) {
   };
 }
 
-async function invalidateProductCaches() {
+async function invalidateProductCaches(_profileId) {
   // Simple approach: we could use pattern delete if Redis supports it
   // For now, product list cache is short-lived (60s)
   logger.debug('Product caches invalidated');

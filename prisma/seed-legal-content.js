@@ -4,6 +4,7 @@
  */
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
+
 const prisma = new PrismaClient();
 
 const LEGAL_PAGES = [
@@ -159,14 +160,16 @@ Visi kami: mempercepat koneksi bisnis yang relevan dan dapat dipercaya di Indone
 ];
 
 async function main() {
-  for (const page of LEGAL_PAGES) {
-    await prisma.staticPage.upsert({
-      where: { slug: page.slug },
-      update: { title: page.title, content: page.content, status: 'PUBLISHED' },
-      create: { ...page, status: 'PUBLISHED' },
-    });
-    console.log('Published:', page.slug);
-  }
+  for (let i = 0; i < LEGAL_PAGES.length; i++) {
+  const item = LEGAL_PAGES[i];
+
+  await prisma.staticPage.upsert({
+    where: { slug: item.slug },
+    update: { title: item.title, content: item.content, status: 'PUBLISHED' },
+    create: { ...item, status: 'PUBLISHED' },
+  });
+  console.log('Published:', item.slug);
+}
   console.log('Done.');
 }
 

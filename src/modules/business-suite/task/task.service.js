@@ -117,31 +117,35 @@ async function runTaskReminders() {
     include: { task: { include: { party: true } } },
   });
 
-  for (const reminder of reminders) {
+  for (let i = 0; i < reminders.length; i++) {
+    const item = reminders[i];
+
     try {
       const members = await prisma.businessRole.findMany({
-        where: { partyId: reminder.task.partyId },
+        where: { partyId: item.task.partyId },
         select: { profileId: true },
       });
 
-      for (const { profileId } of members) {
+      for (let j = 0; j < members.length; j++) {
+        const member = members[j];
+
         await prisma.notification.create({
           data: {
-            profileId,
+            profileId: member.profileId,
             type: 'TASK_REMINDER',
-            title: `Task Reminder: ${reminder.task.title}`,
-            message: `Task "${reminder.task.title}" deadline: ${reminder.task.targetDate?.toLocaleDateString('id-ID')}`,
-            data: { taskId: reminder.task.id, targetDate: reminder.task.targetDate },
+            title: `Task Reminder: ${item.task.title}`,
+            message: `Task "${item.task.title}" deadline: ${item.task.targetDate?.toLocaleDateString('id-ID')}`,
+            data: { taskId: item.task.id, targetDate: item.task.targetDate },
           },
         });
       }
 
       await prisma.taskReminder.update({
-        where: { id: reminder.id },
+        where: { id: item.id },
         data: { sent: true, sentAt: new Date() },
       });
     } catch (e) {
-      logger.error('Task reminder failed', { error: e.message, reminderId: reminder.id });
+      logger.error('Task reminder failed', { error: e.message, reminderId: item.id });
     }
   }
 }

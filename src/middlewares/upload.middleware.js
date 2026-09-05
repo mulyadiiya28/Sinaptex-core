@@ -51,10 +51,11 @@ async function assertRealFileType(buffer, allowedMimes = ALLOWED_MIME) {
 
   let fileTypeFromBuffer;
   try {
-    ({ fileTypeFromBuffer } = require('file-type'));
+    // eslint-disable-next-line import/no-unresolved
+    ({ fileTypeFromBuffer } = await import("file-type"));
   } catch {
     throw ApiError.internal(
-      'file-type package is required for upload content validation',
+      "file-type package is required for upload content validation",
       ErrorCodes.INTERNAL_ERROR
     );
   }

@@ -1,13 +1,15 @@
-const prisma = require('../../../config/prisma');
-const ApiError = require('../../../utils/apiError');
-const ErrorCodes = require('../../../utils/errorCodes');
+const prisma = require("../../../config/prisma");
 
 async function getOrCreateCard(partyId, productId, variantId = null) {
   let card = await prisma.inventoryCard.findUnique({
     where: { partyId_productId_variantId: { partyId, productId, variantId } },
   });
+
   if (!card) {
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
     card = await prisma.inventoryCard.create({
       data: {
         partyId,
@@ -18,19 +20,36 @@ async function getOrCreateCard(partyId, productId, variantId = null) {
       },
     });
   }
+
   return card;
 }
 
 async function addEntry(data) {
-  const { partyId, productId, variantId, type, description, referenceNo, referenceType, referenceId, qty, unitCost, createdBy } = data;
+  const {
+    partyId,
+    productId,
+    variantId,
+    type,
+    description,
+    referenceNo,
+    referenceType,
+    referenceId,
+    qty,
+    unitCost,
+    createdBy,
+  } = data;
 
   return prisma.$transaction(async (tx) => {
     const card = await getOrCreateCard(partyId, productId, variantId);
     let stockAfter = card.currentStock;
 
-    if (type === 'IN') stockAfter += qty;
-    else if (type === 'OUT') stockAfter -= qty;
-    else if (type === 'ADJUST') stockAfter = qty;
+    if (type === "IN") {
+      stockAfter += qty;
+    } else if (type === "OUT") {
+      stockAfter -= qty;
+    } else if (type === "ADJUST") {
+      stockAfter = qty;
+    }
 
     const entry = await tx.inventoryCardEntry.create({
       data: {
@@ -54,17 +73,29 @@ async function addEntry(data) {
       currentStock: stockAfter,
       lastMovementAt: new Date(),
     };
-    if (type === 'IN') updateData.totalIn = { increment: qty };
-    if (type === 'OUT') updateData.totalOut = { increment: qty };
-    if (type === 'ADJUST') updateData.totalAdjust = { increment: Math.abs(qty - card.currentStock) };
 
-    // Update avgUnitCost (simple moving average)
-    if (type === 'IN' && unitCost) {
-      const totalValue = (card.currentStock * (card.avgUnitCost || 0)) + (qty * unitCost);
-      updateData.avgUnitCost = totalValue / stockAfter;
+    if (type === "IN") {
+      updateData.totalIn = { increment: qty };
+    }
+    if (type === "OUT") {
+      updateData.totalOut = { increment: qty };
+    }
+    if (type === "ADJUST") {
+      const diff = Math.abs(qty - card.currentStock);
+      updateData.totalAdjust = { increment: diff };
     }
 
-    await tx.inventoryCard.update({ where: { id: card.id }, data: updateData });
+    // Update avgUnitCost (simple moving average)
+    if (type === "IN" && unitCost) {
+      const currentAvg = card.avgUnitCost || 0;
+      const totalValue = (card.currentStock * currentAvg) + (qty * unitCost);
+      updateData.avgUnitCost = stockAfter > 0 ? totalValue / stockAfter : 0;
+    }
+
+    await tx.inventoryCard.update({
+      where: { id: card.id },
+      data: updateData,
+    });
 
     return entry;
   });
@@ -77,14 +108,23 @@ async function listEntries(partyId, productId, variantId, { page = 1, limit = 20
   const [items, total] = await Promise.all([
     prisma.inventoryCardEntry.findMany({
       where: { cardId: card.id },
-      orderBy: { date: 'desc' },
+      orderBy: { date: "desc" },
       skip,
       take: limit,
     }),
     prisma.inventoryCardEntry.count({ where: { cardId: card.id } }),
   ]);
 
-  return { card, items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return {
+    card,
+    items,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 }
 
 async function getCardSummary(partyId, productId, variantId) {
@@ -93,16 +133,22 @@ async function getCardSummary(partyId, productId, variantId) {
     where: { id: productId },
     select: { name: true, sku: true, price: true },
   });
-  const variant = variantId ? await prisma.productVariant.findUnique({
-    where: { id: variantId },
-    select: { name: true, sku: true },
-  }) : null;
+
+  let variant = null;
+  if (variantId) {
+    variant = await prisma.productVariant.findUnique({
+      where: { id: variantId },
+      select: { name: true, sku: true },
+    });
+  }
+
+  const unitPrice = card.avgUnitCost || product?.price || 0;
 
   return {
     ...card,
     product,
     variant,
-    inventoryValue: card.currentStock * (card.avgUnitCost || product?.price || 0),
+    inventoryValue: card.currentStock * unitPrice,
   };
 }
 
@@ -121,14 +167,28 @@ async function listAllCards(partyId, { page = 1, limit = 20, lowStock = false } 
         product: { select: { id: true, name: true, sku: true, price: true } },
         variant: { select: { id: true, name: true, sku: true } },
       },
-      orderBy: { currentStock: 'asc' },
+      orderBy: { currentStock: "asc" },
       skip,
       take: limit,
     }),
     prisma.inventoryCard.count({ where }),
   ]);
 
-  return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  return {
+    items,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 }
 
-module.exports = { getOrCreateCard, addEntry, listEntries, getCardSummary, listAllCards };
+module.exports = {
+  getOrCreateCard,
+  addEntry,
+  listEntries,
+  getCardSummary,
+  listAllCards,
+};

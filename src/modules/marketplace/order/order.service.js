@@ -18,7 +18,9 @@ function generateInvoiceNumber() {
  */
 function groupBySeller(items) {
   const map = new Map();
-  for (const item of items) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+
     const sellerId = item.product.partyId;
     if (!map.has(sellerId)) map.set(sellerId, []);
     map.get(sellerId).push(item);
@@ -26,7 +28,7 @@ function groupBySeller(items) {
   return map;
 }
 
-async function createOrderFromCart(profileId, { shippingAddress, notes, idempotencyKey }) {
+async function createOrderFromCart(profileId, { shippingAddress, notes, _idempotencyKey }) {
   const cart = await prisma.cart.findUnique({
     where: { profileId },
     include: {
@@ -43,8 +45,6 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
   }
 
   // Ensure buyer has a Party for escrow
-  const buyerParty = await ensureBuyerParty(profileId);
-
   const sellerGroups = groupBySeller(cart.items);
   const sellerIds = Array.from(sellerGroups.keys());
 
@@ -60,12 +60,16 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
   const subOrdersData = [];
   const allOrderItems = [];
 
-  for (const [sellerPartyId, items] of sellerGroups) {
+  const groups = Array.from(sellerGroups);
+
+  for (let i = 0; i < groups.length; i++) {
+    const [sellerPartyId, items] = groups[i];
     let subtotal = 0;
     const orderItemsData = [];
 
-    for (const item of items) {
-      const product = item.product;
+    for (let j = 0; j < items.length; j++) {
+      const item = items[j];
+      const { product } = item;
       let unitPrice = product.price;
       let availableStock = product.stock;
 
@@ -120,8 +124,9 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
 
   return prisma.$transaction(async (tx) => {
     // Atomic stock decrement
-    for (const item of cart.items) {
-      const product = item.product;
+    for (let i = 0; i < cart.items.length; i++) {
+      const item = cart.items[i];
+      const { product } = item;
       const decrement = item.quantity;
 
       if (item.variantId) {
@@ -164,7 +169,9 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
     });
 
     // Create sub-orders
-    for (const sub of subOrdersData) {
+    for (let i = 0; i < subOrdersData.length; i++) {
+      const sub = subOrdersData[i];
+
       const subOrder = await tx.orderSub.create({
         data: {
           orderId: order.id,
@@ -174,7 +181,9 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
       });
 
       // Link items to sub-order
-      for (const item of sub.items) {
+      for (let j = 0; j < sub.items.length; j++) {
+        const item = sub.items[j];
+
         await tx.orderItem.updateMany({
           where: { orderId: order.id, productId: item.productId, variantId: item.variantId || null },
           data: { subOrderId: subOrder.id },
@@ -186,7 +195,9 @@ async function createOrderFromCart(profileId, { shippingAddress, notes, idempote
     await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
 
     // Inventory logs
-    for (const item of cart.items) {
+    for (let i = 0; i < cart.items.length; i++) {
+      const item = cart.items[i];
+
       await tx.inventoryLog.create({
         data: {
           inventoryBookId: (await ensureInventoryBook(item.product.partyId)).id,
@@ -273,12 +284,14 @@ async function handlePaymentWebhook(provider, payload) {
 
     await prisma.$transaction(async (tx) => {
       // Create escrow per sub-order
-      for (const sub of order.subOrders) {
+      for (let i = 0; i < order.subOrders.length; i++) {
+        const item = order.subOrders[i];
+
         const escrow = await tx.escrowTransaction.create({
           data: {
             buyerPartyId: buyerParty.id,
-            sellerPartyId: sub.sellerPartyId,
-            amount: sub.subtotal,
+            sellerPartyId: item.sellerPartyId,
+            amount: item.subtotal,
             currency: order.currency,
             status: 'HELD',
             heldAt: new Date(),
@@ -286,7 +299,7 @@ async function handlePaymentWebhook(provider, payload) {
         });
 
         await tx.orderSub.update({
-          where: { id: sub.id },
+          where: { id: item.id },
           data: { status: 'PAID', escrowId: escrow.id },
         });
       }
@@ -298,14 +311,16 @@ async function handlePaymentWebhook(provider, payload) {
     });
 
     // Cash entry: income for each seller
-    for (const sub of order.subOrders) {
-      await ensureCashBook(sub.sellerPartyId);
+    for (let i = 0; i < order.subOrders.length; i++) {
+      const item = order.subOrders[i];
+
+      await ensureCashBook(item.sellerPartyId);
       await prisma.cashEntry.create({
         data: {
-          cashBookId: (await prisma.cashBook.findUnique({ where: { partyId: sub.sellerPartyId } })).id,
-          partyId: sub.sellerPartyId,
+          cashBookId: (await prisma.cashBook.findUnique({ where: { partyId: item.sellerPartyId } })).id,
+          partyId: item.sellerPartyId,
           type: 'INCOME',
-          amount: sub.subtotal,
+          amount: item.subtotal,
           currency: order.currency,
           category: 'PENJUALAN',
           description: `Penjualan marketplace #${order.invoiceNumber}`,
@@ -344,31 +359,40 @@ async function notifyOrderPaid(order) {
     });
   } catch (e) { logger.error('Notify buyer failed', { error: e.message }); }
 
-  for (const sub of order.subOrders) {
+  for (let i = 0; i < order.subOrders.length; i++) {
+    const item = order.subOrders[i];
+
     try {
       const sellers = await prisma.businessRole.findMany({
-        where: { partyId: sub.sellerPartyId },
+        where: { partyId: item.sellerPartyId },
         select: { profileId: true },
       });
-      for (const { profileId } of sellers) {
+
+      for (let j = 0; j < sellers.length; j++) {
+        const seller = sellers[j];
+
         await prisma.notification.create({
           data: {
-            profileId,
+            profileId: seller.profileId,
             type: 'ORDER_RECEIVED',
             title: 'Pesanan Baru Masuk',
-            message: `Pesanan #${order.invoiceNumber} senilai Rp ${sub.subtotal.toLocaleString('id-ID')}`,
-            data: { orderId: order.id, subOrderId: sub.id },
+            message: `Pesanan #${order.invoiceNumber} senilai Rp ${item.subtotal.toLocaleString('id-ID')}`,
+            data: { orderId: order.id, subOrderId: item.id },
           },
         });
       }
-    } catch (e) { logger.error('Notify seller failed', { error: e.message }); }
+    } catch (e) {
+      logger.error('Notify seller failed', { error: e.message });
+    }
   }
 }
 
 async function restoreStock(orderId) {
   return prisma.$transaction(async (tx) => {
     const items = await tx.orderItem.findMany({ where: { orderId } });
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
       if (item.variantId) {
         await tx.productVariant.update({
           where: { id: item.variantId },
@@ -490,7 +514,7 @@ async function listMySales(profileId, { page = 1, limit = 20, status } = {}) {
   return { items, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
-async function updateSubOrderStatus(subOrderId, profileId, { status, trackingNumber }) {
+async function updateSubOrderStatus(subOrderId, profileId, { status, _trackingNumber }) {
   const subOrder = await prisma.orderSub.findUnique({
     where: { id: subOrderId },
     include: { order: true, sellerParty: true },
@@ -595,10 +619,12 @@ async function confirmDelivery(subOrderId, profileId) {
       where: { partyId: subOrder.sellerPartyId },
       select: { profileId: true },
     });
-    for (const { profileId: sid } of sellers) {
+    for (let i = 0; i < sellers.length; i++) {
+      const item = sellers[i];
+
       await prisma.notification.create({
         data: {
-          profileId: sid,
+          profileId: item.profileId,
           type: 'ORDER_COMPLETED',
           title: 'Pesanan Selesai',
           message: `Pesanan #${subOrder.order.invoiceNumber} dikonfirmasi diterima. Dana dilepas dari escrow.`,

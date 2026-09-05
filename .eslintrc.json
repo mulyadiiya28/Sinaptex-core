@@ -1,14 +1,41 @@
 {
   "env": {
     "node": true,
-    "es2022": true
+    "es2022": true,
+    "jest": true
   },
-  "extends": ["airbnb-base", "prettier"],
+  "extends": [
+    "airbnb-base",
+    "prettier"
+  ],
   "parserOptions": {
     "ecmaVersion": 2022,
     "sourceType": "script"
   },
   "rules": {
+    "no-use-before-define": ["error", { "functions": false, "classes": true, "variables": true }],
+    "no-unused-vars": ["error", { 
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^_",
+      "caughtErrorsIgnorePattern": "^_" 
+    }],
+    "no-restricted-syntax": [
+      "error",
+      "LabeledStatement",
+      "WithStatement"
+    ],
+    "max-len": ["warn", { 
+      "code": 120, 
+      "ignoreComments": true, 
+      "ignoreStrings": true, 
+      "ignoreTemplateLiterals": true 
+    }],
+    "no-plusplus": [
+      "error",
+      {
+        "allowForLoopAfterthoughts": true
+      }
+    ],
     "no-console": "off",
     "no-underscore-dangle": "off",
     "consistent-return": "off",
@@ -16,7 +43,11 @@
     "import/no-dynamic-require": "off",
     "global-require": "off",
     "camelcase": "off",
-    "no-param-reassign": ["error", { "props": false }],
-    "max-len": ["warn", { "code": 110, "ignoreComments": true, "ignoreStrings": true }]
+    "no-param-reassign": [
+      "error",
+      {
+        "props": false
+      }
+    ]
   }
 }

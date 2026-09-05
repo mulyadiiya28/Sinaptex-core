@@ -57,7 +57,7 @@ async function buildDashboard(partyId, dateRange) {
 function parseDateRange(range) {
   const end = new Date();
   const start = new Date();
-  const days = parseInt(range) || 30;
+  const days = parseInt(range, 10) || 30;
   start.setDate(start.getDate() - days);
   return { startDate: start, endDate: end };
 }
@@ -82,9 +82,7 @@ async function getFinancialSummary(partyId, startDate, endDate) {
   const totalDebt = debtCards.reduce((s, c) => s + c.currentBalance, 0);
 
   const inventoryCards = await prisma.inventoryCard.findMany({ where: { partyId } });
-  const totalInventoryValue = inventoryCards.reduce((s, c) => {
-    return s + (c.currentStock * (c.avgUnitCost || 0));
-  }, 0);
+  const totalInventoryValue = inventoryCards.reduce((s, c) => s + (c.currentStock * (c.avgUnitCost || 0)), 0);
 
   return {
     balance: cashBook?.balance || 0,
@@ -113,17 +111,20 @@ async function getOperationalSummary(partyId, startDate, endDate) {
   ]);
 
   const orderMap = {};
-  for (const s of orderStats) orderMap[s.status] = s._count.status;
+  for (let i = 0; i < orderStats.length; i++) {
+    const item = orderStats[i];
+    orderMap[item.status] = item._count.status;
+  }
 
   return {
     totalProducts,
     lowStockProducts,
     totalOrders,
-    pendingOrders: orderMap['PENDING_PAYMENT'] || 0,
-    processingOrders: orderMap['PROCESSING'] || 0,
-    shippedOrders: orderMap['SHIPPED'] || 0,
-    completedOrders: orderMap['COMPLETED'] || 0,
-    cancelledOrders: orderMap['CANCELLED'] || 0,
+    pendingOrders: orderMap.PENDING_PAYMENT || 0,
+    processingOrders: orderMap.PROCESSING || 0,
+    shippedOrders: orderMap.SHIPPED || 0,
+    completedOrders: orderMap.COMPLETED || 0,
+    cancelledOrders: orderMap.CANCELLED || 0,
   };
 }
 
@@ -151,7 +152,10 @@ async function getTasksSummary(partyId) {
   ]);
 
   const priorityMap = {};
-  for (const p of byPriority) priorityMap[p.priority] = p._count.priority;
+  for (let i = 0; i < byPriority.length; i++) {
+    const item = byPriority[i];
+    priorityMap[item.priority] = item._count.priority;
+  }
 
   return { total, overdue, completed, byPriority: priorityMap };
 }
@@ -196,9 +200,11 @@ async function getRecentActivity(partyId) {
 
 async function refreshDashboardCache(partyId) {
   const ranges = ['7d', '30d', '90d', '1y'];
-  for (const range of ranges) {
-    const dashboard = await buildDashboard(partyId, range);
-    const cacheKey = `dashboard:${partyId}:${range}`;
+  for (let i = 0; i < ranges.length; i++) {
+    const item = ranges[i];
+
+    const dashboard = await buildDashboard(partyId, item);
+    const cacheKey = `dashboard:${partyId}:${item}`;
     await cache.set(cacheKey, dashboard, config.dashboard.cacheTtlSeconds);
   }
   logger.info('Dashboard cache refreshed', { partyId });

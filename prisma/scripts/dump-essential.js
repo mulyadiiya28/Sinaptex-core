@@ -119,11 +119,15 @@ async function dumpEssentialTables(options = {}) {
       const needRequested = requestedTables.includes('needs');
       const offerRequested = requestedTables.includes('offers');
 
-      const whereType = needRequested && offerRequested
-        ? undefined
-        : needRequested
-        ? 'NEED'
-        : 'OFFER';
+      let whereType;
+
+      if (needRequested && offerRequested) {
+        whereType = undefined;
+      } else if (needRequested) {
+        whereType = "NEED";
+      } else {
+        whereType = "OFFER";
+      }
 
       const opportunities = await prisma.opportunity.findMany({
         where: whereType ? { type: whereType } : undefined,

@@ -16,7 +16,7 @@ async function createAgenda(data) {
   }
 
   // Set reminder
-  let reminderAt = data.reminderAt;
+  let { reminderAt } = data;
   if (!reminderAt && data.startAt) {
     reminderAt = new Date(data.startAt);
     reminderAt.setMinutes(reminderAt.getMinutes() - config.agenda.defaultReminderMinutes);
@@ -88,17 +88,21 @@ async function runAgendaReminders() {
     },
   });
 
-  for (const item of upcoming) {
+  for (let i = 0; i < upcoming.length; i++) {
+    const item = upcoming[i];
+
     try {
       const members = await prisma.businessRole.findMany({
         where: { partyId: item.partyId },
         select: { profileId: true },
       });
 
-      for (const { profileId } of members) {
+      for (let j = 0; j < members.length; j++) {
+        const member = members[j];
+
         await prisma.notification.create({
           data: {
-            profileId,
+            profileId: member.profileId,
             type: 'AGENDA_REMINDER',
             title: `Agenda: ${item.title}`,
             message: `${item.title} pada ${item.startAt.toLocaleString('id-ID')}`,

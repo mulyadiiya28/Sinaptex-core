@@ -79,6 +79,7 @@ const createKnowledge = asyncHandler(async (req, res) => {
 
     return tx.jobToBeDone.findUnique({
       where: { id: createdJob.id },
+      // eslint-disable-next-line max-len
       include: { rootProblem: true, clarifyingQuestions: true, solutionMappings: { include: { solutionCategory: true } } },
     });
   });

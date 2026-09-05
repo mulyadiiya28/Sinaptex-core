@@ -58,20 +58,20 @@ const REVALIDATION_INTERVAL_MS = Math.max(
 
 const perMessageDeflate = PER_MESSAGE_DEFLATE_ENABLED
   ? {
-      threshold: PER_MESSAGE_DEFLATE_THRESHOLD,
-      zlibDeflateOptions: {
-        chunkSize: 16 * 1024,
-        memLevel: 7,
-        level: ZLIB_LEVEL,
-      },
-      zlibInflateOptions: {
-        chunkSize: 16 * 1024,
-      },
-      clientNoContextTakeover: true,
-      serverNoContextTakeover: true,
-      serverMaxWindowBits: 10,
-      concurrencyLimit: 10,
-    }
+    threshold: PER_MESSAGE_DEFLATE_THRESHOLD,
+    zlibDeflateOptions: {
+      chunkSize: 16 * 1024,
+      memLevel: 7,
+      level: ZLIB_LEVEL,
+    },
+    zlibInflateOptions: {
+      chunkSize: 16 * 1024,
+    },
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+    serverMaxWindowBits: 10,
+    concurrencyLimit: 10,
+  }
   : false;
 
 /** @type {Map<string, Set<string>>} */
@@ -131,7 +131,7 @@ class WsRateLimiter {
 
     const key = `${profileId}:${eventName}`;
     const now = Date.now();
-    let bucket = this.buckets.get(key);
+    const bucket = this.buckets.get(key);
 
     if (!bucket || now > bucket.resetAt) {
       this.buckets.set(key, { count: 1, resetAt: now + limit.windowMs });
@@ -148,8 +148,8 @@ class WsRateLimiter {
 
   cleanup() {
     const now = Date.now();
-    for (const [key, bucket] of this.buckets.entries()) {
-      if (now > bucket.resetAt) this.buckets.delete(key);
+    for (const item of this.buckets.entries()) {
+      if (now > item[1].resetAt) this.buckets.delete(item[0]);
     }
   }
 }

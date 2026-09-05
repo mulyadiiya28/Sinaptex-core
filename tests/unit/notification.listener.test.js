@@ -27,7 +27,11 @@ describe('Notification Event Listeners (MVP Phase 9)', () => {
     });
 
     // Wait a tick for async eventBus handler
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
 
     expect(prisma.notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -47,7 +51,11 @@ describe('Notification Event Listeners (MVP Phase 9)', () => {
       rating: 5,
     });
 
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
 
     expect(prisma.notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -66,7 +74,11 @@ describe('Notification Event Listeners (MVP Phase 9)', () => {
       profileId: 'profile-user-1',
     });
 
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
 
     expect(prisma.notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -85,7 +97,11 @@ describe('Notification Event Listeners (MVP Phase 9)', () => {
       dealTitle: 'Pengadaan 100 Ton Beras Organik',
     });
 
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 100);
+    });
 
     expect(prisma.notification.create).toHaveBeenCalledWith({
       data: expect.objectContaining({

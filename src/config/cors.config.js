@@ -1,5 +1,5 @@
 // src/config/cors.config.js
-const ApiError = require('../utils/ApiError'); // Change from 'apiError' to 'ApiError'
+const ApiError = require('../utils/apiError'); 
 const ErrorCodes = require('../utils/errorCodes');
 const logger = require('../core/logger');
 

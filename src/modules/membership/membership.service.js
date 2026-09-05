@@ -1,6 +1,6 @@
 // src/modules/opportunity/opportunityPolicy.service.js
 const prismaModule = require('../../config/prisma');
-const ApiError = require('../../utils/ApiError');
+const ApiError = require('../../utils/apiError');
 
 // No import of membershipService to avoid circular dependency
 

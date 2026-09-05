@@ -1,6 +1,6 @@
 // src/modules/opportunity/opportunityPolicy.service.js
 const prismaModule = require('../../config/prisma');
-const ApiError = require('../../utils/ApiError');
+const ApiError = require('../../utils/apiError');
 
 // JANGAN import membershipService di sini - ini menyebabkan circular dependency
 

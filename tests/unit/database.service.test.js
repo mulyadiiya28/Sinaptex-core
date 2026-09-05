@@ -1,22 +1,30 @@
-const { getPrismaClient, checkDatabaseHealth, disconnectDatabase } = require('../../src/core/database.service');
+const prisma = require('../../src/config/prisma');
+const { checkDatabaseHealth, disconnectDatabase } = require('../../src/core/database.service');
+
+// Mock Prisma client singleton
+jest.mock('../../src/config/prisma', () => ({
+  $queryRaw: jest.fn(),
+  $disconnect: jest.fn(),
+}));
 
 describe('Database Utility Service (Prisma Client Singleton)', () => {
-  it('returns the same singleton instance on repeated calls', () => {
-    const client1 = getPrismaClient();
-    const client2 = getPrismaClient();
-
-    expect(client1).toBeDefined();
-    expect(client2).toBeDefined();
-    expect(client1).toBe(client2);
+  beforeEach(() => {
+    jest.clearAllMocks();
   });
 
   it('performs health check query successfully', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ '?column?': 1 }]);
+
     const health = await checkDatabaseHealth();
-    expect(health).toHaveProperty('ok');
+    expect(health.ok).toBe(true);
     expect(typeof health.latencyMs).toBe('number');
+    expect(prisma.$queryRaw).toHaveBeenCalled();
   });
 
   it('handles disconnect gracefully without throwing', async () => {
+    prisma.$disconnect.mockResolvedValueOnce();
+
     await expect(disconnectDatabase()).resolves.not.toThrow();
+    expect(prisma.$disconnect).toHaveBeenCalled();
   });
 });

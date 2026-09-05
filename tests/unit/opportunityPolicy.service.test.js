@@ -1,19 +1,28 @@
+// tests/unit/opportunityPolicy.service.test.js
 const opportunityPolicyService = require('../../src/modules/opportunity/opportunityPolicy.service');
-const membershipService = require('../../src/modules/membership/membership.service');
-const prisma = require('../../src/config/prisma');
 const ErrorCodes = require('../../src/utils/errorCodes');
 
-jest.mock('../../src/modules/membership/membership.service');
+// Mock prisma - use the correct path with 'src'
 jest.mock('../../src/config/prisma', () => ({
   $queryRaw: jest.fn(),
   opportunity: {
     count: jest.fn(),
   },
+  membership: {
+    findFirst: jest.fn(),
+  },
 }));
+
+const prisma = require('../../src/config/prisma');
+
+// Create a local mock for membership checking
+const mockMembershipChecker = jest.fn();
 
 describe('Opportunity Policy Service - Quota Enforcement', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Inject the mock membership checker
+    opportunityPolicyService.setMembershipChecker(mockMembershipChecker);
   });
 
   describe('getLimit', () => {
@@ -37,7 +46,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
 
   describe('checkOpportunityQuota', () => {
     it('allows a non-member when active count is 0', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(false);
+      mockMembershipChecker.mockResolvedValue(false);
       prisma.opportunity.count.mockResolvedValue(0);
 
       const result = await opportunityPolicyService.checkOpportunityQuota('profile-123', 'OFFER');
@@ -50,7 +59,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
     });
 
     it('disallows a non-member when active count is already 1', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(false);
+      mockMembershipChecker.mockResolvedValue(false);
       prisma.opportunity.count.mockResolvedValue(1);
 
       const result = await opportunityPolicyService.checkOpportunityQuota('profile-123', 'NEED');
@@ -63,7 +72,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
     });
 
     it('allows a member when active count is 19', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(true);
+      mockMembershipChecker.mockResolvedValue(true);
       prisma.opportunity.count.mockResolvedValue(19);
 
       const result = await opportunityPolicyService.checkOpportunityQuota('profile-123', 'OFFER');
@@ -76,7 +85,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
     });
 
     it('disallows a member when active count reaches 20', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(true);
+      mockMembershipChecker.mockResolvedValue(true);
       prisma.opportunity.count.mockResolvedValue(20);
 
       const result = await opportunityPolicyService.checkOpportunityQuota('profile-123', 'NEED');
@@ -91,7 +100,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
 
   describe('enforceOpportunityQuota', () => {
     it('succeeds without throwing when quota is not exceeded', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(false);
+      mockMembershipChecker.mockResolvedValue(false);
       prisma.opportunity.count.mockResolvedValue(0);
 
       const res = await opportunityPolicyService.enforceOpportunityQuota('profile-123', 'OFFER');
@@ -99,7 +108,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
     });
 
     it('throws ApiError.forbidden with OFFER_QUOTA_EXCEEDED for non-members exceeding 1 offer', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(false);
+      mockMembershipChecker.mockResolvedValue(false);
       prisma.opportunity.count.mockResolvedValue(1);
 
       await expect(
@@ -111,7 +120,7 @@ describe('Opportunity Policy Service - Quota Enforcement', () => {
     });
 
     it('throws ApiError.forbidden with NEED_QUOTA_EXCEEDED for members exceeding 20 needs', async () => {
-      membershipService.hasActiveMembership.mockResolvedValue(true);
+      mockMembershipChecker.mockResolvedValue(true);
       prisma.opportunity.count.mockResolvedValue(20);
 
       await expect(

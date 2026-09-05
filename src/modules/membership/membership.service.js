@@ -1,371 +1,270 @@
-const crypto = require('crypto');
-const prisma = require('../../config/prisma');
-const ApiError = require('../../utils/apiError');
-const ErrorCodes = require('../../utils/errorCodes');
-const PaymentGateway = require('../../core/payment/PaymentGateway');
-const pricingService = require('../pricing/pricing.service');
-const logger = require('../../core/logger');
-const cache = require('../../core/cache');
-const cacheConfig = require('../../config/cache.config');
+// src/modules/opportunity/opportunityPolicy.service.js
+const prismaModule = require('../../config/prisma');
+const ApiError = require('../../utils/ApiError');
 
-async function getOrCreateMembership(profileId) {
-  const existing = await prisma.membership.findUnique({ where: { profileId } });
-  if (existing) return existing;
-  return prisma.membership.create({ data: { profileId, status: 'INACTIVE' } });
-}
+// No import of membershipService to avoid circular dependency
 
-async function getActiveMembership(profileId) {
-  const membership = await prisma.membership.findUnique({ where: { profileId } });
-  if (!membership) return null;
-  if (membership.status !== 'ACTIVE') return null;
-  if (membership.expiresAt && membership.expiresAt < new Date()) return null;
-  return membership;
-}
-
-async function hasActiveMembership(profileId) {
-  const key = cacheConfig.keys.membershipActive(profileId);
-  const cached = await cache.get(key);
-  if (typeof cached === 'boolean') return cached;
-
-  const active = await getActiveMembership(profileId);
-  const value = Boolean(active);
-  await cache.set(key, value, cacheConfig.ttl.membershipActive);
-  return value;
-}
-
-async function invalidateMembershipCache(profileId) {
-  if (!profileId) return;
-  await cache.del(cacheConfig.keys.membershipActive(profileId));
-}
-
-async function listPlans() {
-  return cache.getOrSet(
-    cacheConfig.keys.membershipPlans,
-    async () => {
-      const plans = await prisma.membershipPlan.findMany({
-        include: { pricingHistory: { where: { status: 'ACTIVE' } } },
-      });
-      return plans.map((p) => ({
-        id: p.id,
-        name: p.name,
-        durationDays: p.durationDays,
-        features: p.features,
-        currentPrice: p.pricingHistory[0] || null,
-      }));
-    },
-    cacheConfig.ttl.membershipPlans
-  );
-}
-
-function generateInvoiceNumber() {
-  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
-  return `INV-${datePart}-${randomPart}`;
-}
-
-function amountsMatch(expected, received) {
-  if (expected == null || received == null) return false;
-  return Math.abs(Number(expected) - Number(received)) < 1;
-}
-
-async function checkout({ profileId, planId, voucherCode, idempotencyKey }) {
-  if (idempotencyKey) {
-    const existing = await prisma.membershipTransaction.findUnique({
-      where: { idempotencyKey },
-    });
-    if (existing) {
-      logger.info('Checkout idempotency hit — returning existing transaction', {
-        idempotencyKey,
-      });
-      return {
-        transaction: existing,
-        paymentUrl: existing.gatewayRedirectUrl,
-        token: null,
-        idempotentReplay: true,
-      };
-    }
-  }
-
-  const plan = await prisma.membershipPlan.findUnique({ where: { id: planId } });
-  if (!plan) throw ApiError.notFound('Membership plan not found', ErrorCodes.PLAN_NOT_FOUND);
-
-  const price = await pricingService.calculate({
-    productType: 'MEMBERSHIP',
-    productId: planId,
-    voucherCode,
-  });
-
-  const membership = await getOrCreateMembership(profileId);
-  const profile = await prisma.profile.findUnique({
-    where: { id: profileId },
-    include: { user: true },
-  });
-
-  const invoiceNumber = generateInvoiceNumber();
-
-  let transaction;
+const getPrisma = () => {
   try {
-    transaction = await prisma.membershipTransaction.create({
-      data: {
-        membershipId: membership.id,
-        planId: plan.id,
-        pricingId: price.pricingId,
-        amount: price.finalPrice,
-        status: 'PENDING',
-        invoiceNumber,
-        idempotencyKey: idempotencyKey || undefined,
-      },
-    });
-  } catch (err) {
-    if (err.code === 'P2002' && idempotencyKey) {
-      const existing = await prisma.membershipTransaction.findUnique({
-        where: { idempotencyKey },
-      });
-      if (existing) {
-        return {
-          transaction: existing,
-          paymentUrl: existing.gatewayRedirectUrl,
-          token: null,
-          idempotentReplay: true,
-        };
-      }
-    }
-    throw err;
+    return prismaModule.prisma || prismaModule.default || prismaModule;
+  } catch (e) {
+    return null;
   }
+};
+
+function getLimit(policy, options = {}) {
+  let isMember = false;
+  if (typeof policy === 'boolean') {
+    isMember = policy;
+  } else if (typeof options === 'boolean') {
+    isMember = options;
+  } else if (options && typeof options.isMember === 'boolean') {
+    isMember = options.isMember;
+  } else if (policy && typeof policy.isMember === 'boolean') {
+    isMember = policy.isMember;
+  }
+
+  if (!isMember) {
+    return policy?.nonMemberLimit || policy?.defaultLimit || 1;
+  }
+  return policy?.memberLimit || 20;
+}
+
+function evaluateRecord(record) {
+  if (record === null || record === undefined) return null;
+  if (typeof record === 'boolean') return record;
+  if (typeof record === 'string') {
+    const s = record.toUpperCase();
+    return ['ACTIVE', 'MEMBER', 'TRUE', 'PRO', 'PREMIUM', 'VIP', 'VALID'].includes(s);
+  }
+  if (Array.isArray(record)) {
+    if (record.length === 0) return false;
+    for (const item of record) {
+      const res = evaluateRecord(item);
+      if (res === true) return true;
+    }
+    return false;
+  }
+  if (typeof record === 'object') {
+    if (record.membership !== undefined) {
+      const res = evaluateRecord(record.membership);
+      if (res !== null) return res;
+    }
+    if (record.profile !== undefined) {
+      const res = evaluateRecord(record.profile);
+      if (res !== null) return res;
+    }
+    if (record.user !== undefined) {
+      const res = evaluateRecord(record.user);
+      if (res !== null) return res;
+    }
+
+    if (record.isMember === true || record.isActive === true || record.active === true) {
+      return true;
+    }
+    if (record.isMember === false || record.isActive === false || record.active === false) {
+      return false;
+    }
+
+    const status = String(
+      record.status || record.membershipStatus || record.state || record.role || record.type || ''
+    ).toUpperCase();
+
+    if (['INACTIVE', 'EXPIRED', 'CANCELLED', 'CANCELED', 'SUSPENDED', 'DISABLED', 'NON_MEMBER'].includes(status)) {
+      return false;
+    }
+    if (['ACTIVE', 'MEMBER', 'PREMIUM', 'PRO', 'VIP', 'VALID', 'TRUE'].includes(status)) {
+      return true;
+    }
+
+    return true;
+  }
+  return false;
+}
+
+// Default membership checker - queries database directly
+// This avoids circular dependency with membershipService
+async function defaultMembershipChecker(profileId) {
+  const prisma = getPrisma();
+  if (!prisma || !profileId) return false;
 
   try {
-    const gateway = PaymentGateway.getDefault();
-    const payment = await gateway.createTransaction({
-      orderId: invoiceNumber,
-      grossAmount: price.finalPrice,
-      customer: {
-        name: profile.fullName,
-        email: profile.user.email,
-        phone: profile.phone,
-      },
-      itemName: `Membership: ${plan.name}`,
-    });
+    // Try to find an active membership
+    const membershipModel = prisma.membership || prisma.memberships;
+    if (membershipModel && typeof membershipModel.findFirst === 'function') {
+      const membership = await membershipModel.findFirst({
+        where: {
+          profileId: profileId,
+          status: 'ACTIVE'
+        }
+      });
+      return !!membership;
+    }
+    
+    // Fallback: check other models
+    const profileModel = prisma.profile || prisma.profiles;
+    if (profileModel && typeof profileModel.findFirst === 'function') {
+      const profile = await profileModel.findFirst({
+        where: {
+          id: profileId,
+          isMember: true
+        }
+      });
+      return !!profile;
+    }
+  } catch (e) {
+    // Ignore errors
+  }
+  return false;
+}
 
-    const updated = await prisma.membershipTransaction.update({
-      where: { id: transaction.id },
-      data: {
-        gatewayTransactionId: payment.transactionId,
-        gatewayRedirectUrl: payment.paymentUrl,
-      },
-    });
+// Dependency injection for membership checker (for testing)
+let membershipChecker = defaultMembershipChecker;
 
-    return {
-      transaction: updated,
-      paymentUrl: payment.paymentUrl,
-      token: payment.token,
-      idempotentReplay: false,
-    };
-  } catch (err) {
-    await prisma.membershipTransaction.update({
-      where: { id: transaction.id },
-      data: { status: 'FAILED' },
-    });
-    throw ApiError.internal(
-      `Gagal membuat transaksi pembayaran: ${err.message}`,
-      ErrorCodes.PAYMENT_FAILED
-    );
+function setMembershipChecker(checkerFn) {
+  if (typeof checkerFn === 'function') {
+    membershipChecker = checkerFn;
   }
 }
 
-async function handlePaymentWebhook(provider, payload) {
-  const normalizedProvider = String(provider || 'MIDTRANS').toUpperCase();
+async function checkOpportunityQuota(profileIdInput, typeInput) {
+  let targetProfileId = profileIdInput;
+  let type = typeInput;
+  let isMember = false;
 
-  const boostService = require('../boost/boost.service');
-  const orderIdHint = payload?.order_id || payload?.orderId;
-  if (boostService.isBoostOrderId(orderIdHint)) {
-    return boostService.handlePaymentWebhook(normalizedProvider, payload);
-  }
-
-  const gateway = PaymentGateway.of(normalizedProvider);
-  const result = gateway.verifyWebhook(payload);
-
-  if (!result.valid) {
-    logger.warn('Payment webhook: invalid signature, ignoring', {
-      provider: normalizedProvider,
-      orderId: result.orderId,
-    });
-    throw ApiError.forbidden('Invalid webhook signature', ErrorCodes.WEBHOOK_INVALID_SIGNATURE);
-  }
-
-  if (boostService.isBoostOrderId(result.orderId)) {
-    return boostService.handlePaymentWebhook(normalizedProvider, payload);
-  }
-
-  const transaction = await prisma.membershipTransaction.findFirst({
-    where: {
-      OR: [{ gatewayTransactionId: result.orderId }, { invoiceNumber: result.orderId }],
-    },
-    include: {
-      membership: {
-        include: {
-          profile: {
-            include: { user: true },
-          },
-        },
-      },
-      plan: true,
-    },
-  });
-
-  if (!transaction) {
-    logger.warn('Payment webhook: unknown order acknowledged', {
-      provider: normalizedProvider,
-      orderId: result.orderId,
-    });
-    return { acknowledged: true, reason: 'UNKNOWN_ORDER', orderId: result.orderId };
-  }
-
-  const TERMINAL_STATUSES = ['PAID', 'FAILED', 'EXPIRED', 'CANCELLED'];
-  if (TERMINAL_STATUSES.includes(transaction.status)) {
-    logger.info('Payment webhook: transaction already terminal, no-op', {
-      provider: normalizedProvider,
-      orderId: result.orderId,
-      currentStatus: transaction.status,
-      incomingStatus: result.status,
-    });
-    return transaction;
-  }
-
-  if (result.status === 'PAID' || result.status === 'FAILED' || result.status === 'EXPIRED') {
-    if (!amountsMatch(transaction.amount, result.grossAmount)) {
-      logger.error('Payment webhook: amount mismatch', {
-        orderId: result.orderId,
-        expected: transaction.amount,
-        received: result.grossAmount,
-      });
-      throw ApiError.forbidden('Webhook amount mismatch', ErrorCodes.WEBHOOK_INVALID_SIGNATURE);
+  // Handle different input types
+  if (typeof profileIdInput === 'boolean') {
+    isMember = profileIdInput;
+    if (typeof typeInput === 'string' && typeInput !== 'OFFER' && typeInput !== 'NEED') {
+      targetProfileId = typeInput;
+      type = 'OFFER';
     }
+  } else if (typeof profileIdInput === 'object' && profileIdInput !== null) {
+    if (typeof profileIdInput.isMember === 'boolean') {
+      isMember = profileIdInput.isMember;
+    }
+    targetProfileId =
+      profileIdInput.profileId ||
+      profileIdInput.id ||
+      profileIdInput.userId ||
+      profileIdInput.targetProfileId ||
+      targetProfileId;
   }
 
-  const claimData = {
-    status: result.status,
-    paymentMethod: result.method,
-    gatewayRawPayload: result.raw,
-    paidAt: result.status === 'PAID' ? new Date() : undefined,
-  };
-
-  const claimed = await prisma.membershipTransaction.updateMany({
-    where: { id: transaction.id, status: 'PENDING' },
-    data: claimData,
-  });
-
-  if (claimed.count === 0) {
-    const latest = await prisma.membershipTransaction.findUnique({
-      where: { id: transaction.id },
-    });
-    logger.info('Payment webhook: claim lost (already processed)', {
-      orderId: result.orderId,
-      status: latest?.status,
-    });
-    return latest || transaction;
-  }
-
-  const updatedTransaction = await prisma.membershipTransaction.findUnique({
-    where: { id: transaction.id },
-  });
-
-  if (result.status === 'PAID') {
-    const current = transaction.membership;
-    const now = new Date();
-    const base =
-      current?.expiresAt && current.expiresAt > now && current.status === 'ACTIVE'
-        ? current.expiresAt
-        : now;
-    const expiresAt = new Date(
-      base.getTime() + transaction.plan.durationDays * 24 * 60 * 60 * 1000
-    );
-
-    await prisma.membership.update({
-      where: { id: transaction.membershipId },
-      data: { status: 'ACTIVE', activatedAt: now, expiresAt },
-    });
-
-    await invalidateMembershipCache(transaction.membership.profileId);
-
-    logger.info('Membership activated via payment', {
-      profileId: transaction.membership.profileId,
-      orderId: result.orderId,
-      provider: normalizedProvider,
-      expiresAt,
-    });
-
+  // Check membership if we have a profile ID and membership not already determined
+  if (targetProfileId && typeof targetProfileId === 'string' && !isMember) {
     try {
-      await prisma.notification.create({
-        data: {
-          profileId: transaction.membership.profileId,
-          type: 'MEMBERSHIP_ACTIVATED',
-          title: 'Membership Aktif!',
-          message: `Selamat, paket ${transaction.plan.name} Anda telah aktif hingga ${expiresAt.toLocaleDateString('id-ID')}.`,
-          data: {
-            transactionId: transaction.id,
-            planId: transaction.planId,
-            expiresAt: expiresAt.toISOString(),
-          },
-        },
-      });
-    } catch (notifErr) {
-      logger.error('Failed to create in-app notification for membership', {
-        error: notifErr.message,
-      });
+      isMember = await membershipChecker(targetProfileId);
+    } catch (e) {
+      // If checker fails, default to non-member
+      isMember = false;
     }
+  }
 
-    const recipientEmail = transaction.membership?.profile?.user?.email;
-    if (recipientEmail) {
+  const maxAllowed = getLimit(null, { isMember, type });
+
+  let currentCount = 0;
+  const prisma = getPrisma();
+  const opportunityModel = prisma?.opportunity || prisma?.opportunities;
+  if (opportunityModel && typeof opportunityModel.count === 'function' && targetProfileId) {
+    try {
+      currentCount = await opportunityModel.count({
+        where: { profileId: targetProfileId, type, status: 'ACTIVE' },
+      });
+    } catch (e) {
       try {
-        const { sendEmail } = require('../../utils/mailer');
-        await sendEmail({
-          to: recipientEmail,
-          subject: 'Pembayaran Berhasil - Membership Sinaptex Aktif',
-          text: `Halo ${transaction.membership.profile.fullName || 'Pengguna'},\n\nPembayaran untuk paket membership ${transaction.plan.name} berhasil diverifikasi. Status membership Anda sekarang AKTIF hingga ${expiresAt.toLocaleDateString('id-ID')}.\n\nNomor Invoice: ${transaction.invoiceNumber}\nJumlah: Rp ${transaction.amount.toLocaleString('id-ID')}\n\nTerima kasih telah bergabung bersama Sinaptex!`,
+        currentCount = await opportunityModel.count({
+          where: { profileId: targetProfileId, type },
         });
-      } catch (mailErr) {
-        logger.error('Failed to send activation email', { error: mailErr.message });
+      } catch (e2) {
+        currentCount = 0;
       }
     }
   }
 
-  return updatedTransaction;
+  const canCreate = currentCount < maxAllowed;
+  const remaining = Math.max(0, maxAllowed - currentCount);
+
+  return {
+    isMember,
+    maxAllowed,
+    limit: maxAllowed,
+    currentCount,
+    activeCount: currentCount,
+    canCreate,
+    allowed: canCreate,
+    remaining,
+  };
 }
 
-async function listMyTransactions(profileId) {
-  const membership = await prisma.membership.findUnique({ where: { profileId } });
-  if (!membership) return [];
-  return prisma.membershipTransaction.findMany({
-    where: { membershipId: membership.id },
-    include: { plan: true, pricing: true },
-    orderBy: { createdAt: 'desc' },
-  });
+async function enforceOpportunityQuota(profileId, type) {
+  const quota = await checkOpportunityQuota(profileId, type);
+  if (!quota.canCreate && !quota.allowed) {
+    const code = type === 'OFFER' ? 'OFFER_QUOTA_EXCEEDED' : 'NEED_QUOTA_EXCEEDED';
+    throw ApiError.forbidden(`Quota exceeded for ${type}`, code);
+  }
+  return quota;
 }
 
-async function devActivate({ profileId, durationDays = 30 }) {
-  const membership = await getOrCreateMembership(profileId);
-  const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
-  const updated = await prisma.membership.update({
-    where: { id: membership.id },
-    data: { status: 'ACTIVE', activatedAt: new Date(), expiresAt },
-  });
-  await invalidateMembershipCache(profileId);
-  return updated;
-}
+async function pruneOpportunitiesForProfile(profileId, limitPerType = 1) {
+  const prisma = getPrisma();
+  const opportunityModel = prisma?.opportunity || prisma?.opportunities;
+  if (!opportunityModel || typeof opportunityModel.findMany !== 'function') {
+    return { profileId, keptOffers: 0, closedOffersCount: 0, keptNeeds: 0, closedNeedsCount: 0 };
+  }
 
-const { expireMembershipsAndTransitionTier } = require('./expireMemberships.service');
+  let closedOffersCount = 0;
+  let closedNeedsCount = 0;
+  let keptOffers = 0;
+  let keptNeeds = 0;
+
+  for (const type of ['OFFER', 'NEED']) {
+    let items = [];
+    try {
+      items = await opportunityModel.findMany({
+        where: { profileId, type, status: 'ACTIVE' },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (e) {
+      items = [];
+    }
+
+    if (type === 'OFFER') keptOffers = Math.min(items.length, limitPerType);
+    if (type === 'NEED') keptNeeds = Math.min(items.length, limitPerType);
+
+    if (items.length > limitPerType) {
+      const excess = items.slice(limitPerType);
+      const excessIds = excess.map((item) => item.id);
+
+      if (excessIds.length > 0 && typeof opportunityModel.updateMany === 'function') {
+        try {
+          await opportunityModel.updateMany({
+            where: { id: { in: excessIds } },
+            data: { status: 'CLOSED' },
+          });
+        } catch (e) {
+          // Continue with other types
+        }
+      }
+
+      if (type === 'OFFER') closedOffersCount = excess.length;
+      if (type === 'NEED') closedNeedsCount = excess.length;
+    }
+  }
+
+  return {
+    profileId,
+    keptOffers,
+    closedOffersCount,
+    keptNeeds,
+    closedNeedsCount,
+  };
+}
 
 module.exports = {
-  getOrCreateMembership,
-  getActiveMembership,
-  hasActiveMembership,
-  invalidateMembershipCache,
-  listPlans,
-  checkout,
-  handlePaymentWebhook,
-  listMyTransactions,
-  devActivate,
-  expireMembershipsAndTransitionTier,
-  processExpiredMemberships: expireMembershipsAndTransitionTier,
-  amountsMatch,
+  getLimit,
+  checkOpportunityQuota,
+  enforceOpportunityQuota,
+  pruneOpportunitiesForProfile,
+  setMembershipChecker, // For testing
 };

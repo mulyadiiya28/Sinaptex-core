@@ -1,20 +1,16 @@
 const prisma = require('../config/prisma');
-const ApiError = require('../utils/apiError');
+const ApiError = require('../utils/apiError'); 
 const ErrorCodes = require('../utils/errorCodes');
 const asyncHandler = require('../utils/asyncHandler');
 
 /**
- * Escrow Permission Verification Logic & Middleware
- *
- * Verifies that:
- * 1. The request has an authenticated user and profile (`req.profile`).
- * 2. The user owns or is authorized to act on behalf of the participating Party in the escrow.
- * 3. The user has the appropriate escrow operation permission (e.g. BUYER_DEPOSIT, SELLER_CLAIM, BUYER_RELEASE, DISPUTE, ADMIN_OVERRIDE).
- * 4. Optionally enforces verification/KYC tier requirements for high-value escrow transactions.
- */
-
-/**
  * Pure policy validator for escrow party ownership.
+ *
+ * @param {object} profile - Local user profile record from `req.profile`
+ * @param {object} party - Escrow party DB record
+ * @param {object} [options]
+ * @param {boolean} [options.requireVerification=false] - Enforce party verification
+ * @returns {{ allowed: boolean, statusCode?: number, code?: string, message?: string }}
  */
 function verifyEscrowPartyOwnership(profile, party, options = {}) {
   const { requireVerification = false } = options;
@@ -60,6 +56,11 @@ function verifyEscrowPartyOwnership(profile, party, options = {}) {
 
 /**
  * Pure policy validator for escrow transaction participation.
+ *
+ * @param {object} profile - Local user profile record from `req.profile`
+ * @param {object} escrow - Escrow transaction record with buyerParty & sellerParty
+ * @param {'BUYER' | 'SELLER' | 'ANY' | 'ADMIN'} requiredParticipantRole - Role required for the action
+ * @returns {{ allowed: boolean, statusCode?: number, code?: string, message?: string, isBuyer?: boolean, isSeller?: boolean, isAdmin?: boolean }}
  */
 function verifyEscrowParticipation(profile, escrow, requiredParticipantRole = 'ANY') {
   if (!profile) {
@@ -80,10 +81,32 @@ function verifyEscrowParticipation(profile, escrow, requiredParticipantRole = 'A
     };
   }
 
+  const isAdmin =
+    profile.role === 'ADMIN' ||
+    profile.role === 'SUPER_ADMIN' ||
+    profile.isAdmin === true;
+
   const isBuyerOwner = escrow.buyerParty?.ownerId === profile.id;
   const isSellerOwner = escrow.sellerParty?.ownerId === profile.id;
 
-  if (requiredParticipantRole === 'BUYER' && !isBuyerOwner) {
+  if (requiredParticipantRole === 'ADMIN') {
+    if (!isAdmin) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        code: ErrorCodes.ESCROW_UNAUTHORIZED,
+        message: 'Admin authorization required for this escrow action',
+      };
+    }
+    return {
+      allowed: true,
+      isAdmin: true,
+      isBuyer: isBuyerOwner,
+      isSeller: isSellerOwner,
+    };
+  }
+
+  if (requiredParticipantRole === 'BUYER' && !isBuyerOwner && !isAdmin) {
     return {
       allowed: false,
       statusCode: 403,
@@ -92,7 +115,7 @@ function verifyEscrowParticipation(profile, escrow, requiredParticipantRole = 'A
     };
   }
 
-  if (requiredParticipantRole === 'SELLER' && !isSellerOwner) {
+  if (requiredParticipantRole === 'SELLER' && !isSellerOwner && !isAdmin) {
     return {
       allowed: false,
       statusCode: 403,
@@ -101,7 +124,12 @@ function verifyEscrowParticipation(profile, escrow, requiredParticipantRole = 'A
     };
   }
 
-  if (requiredParticipantRole === 'ANY' && !isBuyerOwner && !isSellerOwner) {
+  if (
+    requiredParticipantRole === 'ANY' &&
+    !isBuyerOwner &&
+    !isSellerOwner &&
+    !isAdmin
+  ) {
     return {
       allowed: false,
       statusCode: 403,
@@ -114,20 +142,27 @@ function verifyEscrowParticipation(profile, escrow, requiredParticipantRole = 'A
     allowed: true,
     isBuyer: isBuyerOwner,
     isSeller: isSellerOwner,
+    isAdmin,
   };
 }
 
 /**
  * Validates that the current user owns the party specified in req.body, req.params, or req.query.
  *
- * @param {object} options
+ * @param {object} [options]
  * @param {string} [options.partyIdParam='partyId'] - Name of param/body field containing party ID
  * @param {boolean} [options.requireVerification=false] - Whether the party must be VERIFIED
  */
-const requireEscrowPartyOwner = ({ partyIdParam = 'partyId', requireVerification = false } = {}) =>
+const requireEscrowPartyOwner = ({
+  partyIdParam = 'partyId',
+  requireVerification = false,
+} = {}) =>
   asyncHandler(async (req, res, next) => {
     if (!req.profile) {
-      throw ApiError.unauthorized('Authentication required for escrow operations', ErrorCodes.UNAUTHORIZED);
+      throw ApiError.unauthorized(
+        'Authentication required for escrow operations',
+        ErrorCodes.UNAUTHORIZED
+      );
     }
 
     const partyId =
@@ -137,9 +172,9 @@ const requireEscrowPartyOwner = ({ partyIdParam = 'partyId', requireVerification
       req.body.buyerPartyId ||
       req.body.sellerPartyId;
 
-    if (!partyId) {
+    if (!partyId || typeof partyId !== 'string') {
       throw ApiError.badRequest(
-        `Missing required party identifier (${partyIdParam}) for escrow operation`,
+        `Missing or invalid party identifier (${partyIdParam}) for escrow operation`,
         ErrorCodes.VALIDATION_ERROR
       );
     }
@@ -151,10 +186,12 @@ const requireEscrowPartyOwner = ({ partyIdParam = 'partyId', requireVerification
       },
     });
 
-    const check = verifyEscrowPartyOwnership(req.profile, party, { requireVerification });
+    const check = verifyEscrowPartyOwnership(req.profile, party, {
+      requireVerification,
+    });
+
     if (!check.allowed) {
-      const err = new ApiError(check.statusCode, check.message, [], check.code);
-      throw err;
+      throw new ApiError(check.statusCode, check.message, null, check.code);
     }
 
     req.escrowParty = party;
@@ -164,18 +201,25 @@ const requireEscrowPartyOwner = ({ partyIdParam = 'partyId', requireVerification
 /**
  * Validates that the authenticated user is an authorized participant in an existing EscrowTransaction.
  *
- * @param {'BUYER' | 'SELLER' | 'ANY' | 'ADMIN'} requiredParticipantRole - Role required for the operation
+ * @param {'BUYER' | 'SELLER' | 'ANY' | 'ADMIN'} [requiredParticipantRole='ANY'] - Role required for the operation
  */
 const requireEscrowParticipant = (requiredParticipantRole = 'ANY') =>
   asyncHandler(async (req, res, next) => {
     if (!req.profile) {
-      throw ApiError.unauthorized('Authentication required for escrow operations', ErrorCodes.UNAUTHORIZED);
+      throw ApiError.unauthorized(
+        'Authentication required for escrow operations',
+        ErrorCodes.UNAUTHORIZED
+      );
     }
 
-    const escrowId = req.params.escrowId || req.params.id || req.body.escrowId;
+    const escrowId =
+      req.params.escrowId || req.params.id || req.body.escrowId;
 
-    if (!escrowId) {
-      throw ApiError.badRequest('Missing escrow transaction ID', ErrorCodes.VALIDATION_ERROR);
+    if (!escrowId || typeof escrowId !== 'string') {
+      throw ApiError.badRequest(
+        'Missing or invalid escrow transaction ID',
+        ErrorCodes.VALIDATION_ERROR
+      );
     }
 
     const escrow = await prisma.escrowTransaction.findUnique({
@@ -187,15 +231,20 @@ const requireEscrowParticipant = (requiredParticipantRole = 'ANY') =>
       },
     });
 
-    const check = verifyEscrowParticipation(req.profile, escrow, requiredParticipantRole);
+    const check = verifyEscrowParticipation(
+      req.profile,
+      escrow,
+      requiredParticipantRole
+    );
+
     if (!check.allowed) {
-      const err = new ApiError(check.statusCode, check.message, [], check.code);
-      throw err;
+      throw new ApiError(check.statusCode, check.message, null, check.code);
     }
 
     req.escrow = escrow;
     req.isEscrowBuyer = check.isBuyer;
     req.isEscrowSeller = check.isSeller;
+    req.isEscrowAdmin = check.isAdmin || false;
     next();
   });
 

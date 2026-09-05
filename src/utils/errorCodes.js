@@ -4,8 +4,8 @@
  * kode baru di sini dulu sebelum dipakai di ApiError, supaya semua kode yang
  * beredar selalu terdaftar & bisa diaudit dari satu tempat.
  */
-module.exports = {
-  // Generic (mengikuti HTTP status, dipakai kalau tidak ada kode domain yang lebih spesifik)
+const ErrorCodes = {
+  // Generic (mengikuti HTTP status)
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   UNAUTHORIZED: 'UNAUTHORIZED',
   FORBIDDEN: 'FORBIDDEN',
@@ -36,14 +36,14 @@ module.exports = {
   NOT_CONVERSATION_PARTICIPANT: 'NOT_CONVERSATION_PARTICIPANT',
   EMPTY_MESSAGE: 'EMPTY_MESSAGE',
 
-  // Matching / Fraud (dibekukan, tapi kode tetap didaftarkan karena endpoint masih aktif)
+  // Matching / Fraud
   SELF_MATCH: 'SELF_MATCH',
   FRAUD_DETECTED: 'FRAUD_DETECTED',
 
   // Verification
   NOT_VERIFIED: 'NOT_VERIFIED',
 
-  // Admin / Account moderation (MVP Phase 12)
+  // Admin / Account moderation
   ACCOUNT_SUSPENDED: 'ACCOUNT_SUSPENDED',
   ACCOUNT_BANNED: 'ACCOUNT_BANNED',
 
@@ -60,9 +60,8 @@ module.exports = {
   CORS_ORIGIN_NOT_ALLOWED: 'CORS_ORIGIN_NOT_ALLOWED',
   UNVERIFIED_SESSION: 'UNVERIFIED_SESSION',
   SESSION_INVALID: 'SESSION_INVALID',
-};
 
-module.exports = {
+  // E-commerce / Product / Cart / Order
   PRODUCT_NOT_FOUND: 'PRODUCT_NOT_FOUND',
   PRODUCT_QUOTA_EXCEEDED: 'PRODUCT_QUOTA_EXCEEDED',
   SELLER_MEMBERSHIP_REQUIRED: 'SELLER_MEMBERSHIP_REQUIRED',
@@ -76,3 +75,5 @@ module.exports = {
   REVIEW_NOT_ALLOWED: 'REVIEW_NOT_ALLOWED',
   REVIEW_ALREADY_EXISTS: 'REVIEW_ALREADY_EXISTS',
 };
+
+module.exports = ErrorCodes;

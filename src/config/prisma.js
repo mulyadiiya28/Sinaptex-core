@@ -1,7 +1,11 @@
-const databaseService = require('../core/database.service');
+const { PrismaClient } = require('@prisma/client');
 
-/**
- * Re-export the singleton Prisma Client instance from the Database Utility Service.
- * Ensures backward compatibility across existing modules.
- */
-module.exports = databaseService.prisma;
+const prisma = global.prisma || new PrismaClient();
+
+if (process.env.NODE_ENV !== 'production') {
+  global.prisma = prisma;
+}
+
+// Mendukung impor via require('./prisma') maupun { prisma } = require('./prisma')
+module.exports = prisma;
+module.exports.prisma = prisma;

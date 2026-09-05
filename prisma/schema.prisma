@@ -1959,3 +1959,8 @@ model CashEntry {
   @@index([partyId, type])
   @@map("cash_entries")
 }
+
+prisma.membership = {
+  ...prisma.membership,
+  findUnique: jest.fn(),
+};

@@ -51,7 +51,7 @@ module.exports = async function healthCheck(req, res) {
   // Tetap kembalikan 200 agar platform TIDAK mengirim SIGTERM jika DB/Redis hanya butuh waktu sejenak untuk konek
   res.status(200).json({
     success: healthy,
-    status: healthy ? 'UP' : 'DEGRADED',
+    status: healthy ? 'HEALTHY' : 'DEGRADED',
     checks,
     socket,
     timestamp: new Date().toISOString(),
